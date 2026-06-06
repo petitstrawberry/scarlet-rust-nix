@@ -13,6 +13,7 @@
   openssl,
   pkg-config,
   python3,
+  rustPlatform,
   rustc,
   xz,
   zlib,
@@ -26,6 +27,12 @@ let
   allTargets = [ hostTriple ] ++ targetTriples;
   targetList = lib.concatStringsSep "," allTargets;
   targetManifest = lib.concatMapStringsSep "\n" (target: ''  "${target}",'') targetTriples;
+  bootstrapCargoDeps = rustPlatform.fetchCargoVendor {
+    name = "scarlet-rust-bootstrap-cargo-deps-${builtins.substring 0 12 rustRev}";
+    src = rust-src;
+    sourceRoot = "source/src/bootstrap";
+    hash = "sha256-xxaYOc4Xn3F3ghDEpFR2041gJ98t4lONJ9Ka1OkzGzI=";
+  };
 in
 stdenv.mkDerivation {
   pname = "scarlet-rust-toolchain";
@@ -43,6 +50,7 @@ stdenv.mkDerivation {
     ninja
     pkg-config
     python3
+    rustPlatform.cargoSetupHook
     rustc
     xz
   ];
@@ -57,17 +65,26 @@ stdenv.mkDerivation {
   CARGO_NET_GIT_FETCH_WITH_CLI = "true";
   SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
 
-  dontUnpack = true;
+  cargoDeps = bootstrapCargoDeps;
+  cargoRoot = "src/bootstrap";
+
+  unpackPhase = ''
+    runHook preUnpack
+
+    cp -R "$src" source
+    chmod -R u+w source
+    sourceRoot=source
+    cd "$sourceRoot"
+
+    runHook postUnpack
+  '';
 
   configurePhase = ''
     runHook preConfigure
 
-    cp -R "$src" source
-    chmod -R u+w source
-    cd source
-
     test -x ./x
     test -f library/Cargo.lock
+    test -f src/bootstrap/Cargo.lock
 
     cat > bootstrap.toml <<'EOF'
     change-id = "ignore"
@@ -120,6 +137,10 @@ stdenv.mkDerivation {
   '';
 
   doInstallCheck = true;
+
+  passthru = {
+    inherit bootstrapCargoDeps;
+  };
 
   installCheckPhase = ''
     runHook preInstallCheck

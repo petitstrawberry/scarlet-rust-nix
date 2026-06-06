@@ -55,6 +55,7 @@
           };
         in
         {
+          scarlet-rust-bootstrap-cargo-deps = scarlet-rust-toolchain.bootstrapCargoDeps;
           inherit scarlet-rust-toolchain;
           default = scarlet-rust-toolchain;
         }
