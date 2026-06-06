@@ -21,6 +21,8 @@ jobs:
             system: aarch64-darwin
 
     runs-on: ${{ matrix.os }}
+    env:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -40,9 +42,10 @@ jobs:
             accept-flake-config = true
 
       - uses: cachix/cachix-action@v15
+        if: env.CACHIX_AUTH_TOKEN != ''
         with:
           name: scarlet-dev
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
 
       - name: Build toolchain
         run: nix build .#packages.${{ matrix.system }}.scarlet-rust-toolchain --override-input rust-src path:./rust-src -L --accept-flake-config
