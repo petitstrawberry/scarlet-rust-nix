@@ -57,9 +57,19 @@
             inherit system;
             overlays = [ rust-overlay.overlays.default ];
           };
+          bootstrapRust = pkgs.rust-bin.nightly."2025-12-31".default.override {
+            extensions = [
+              "rust-src"
+              "llvm-tools-preview"
+            ];
+            targets = [
+              "riscv64gc-unknown-none-elf"
+              "aarch64-unknown-none"
+            ];
+          };
           scarlet-rust-toolchain = pkgs.callPackage ./nix/build-toolchain.nix {
             inherit rust-src rustRev targetTriples;
-            bootstrapRust = pkgs.rust-bin.stable."1.94.0".minimal;
+            inherit bootstrapRust;
             hostTriple = hostTriples.${system};
           };
         in
