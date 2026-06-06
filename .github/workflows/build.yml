@@ -22,6 +22,7 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     env:
+      CACHIX_CACHE_NAME: ${{ vars.CACHIX_CACHE_NAME }}
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
     steps:
@@ -42,9 +43,9 @@ jobs:
             accept-flake-config = true
 
       - uses: cachix/cachix-action@v15
-        if: env.CACHIX_AUTH_TOKEN != ''
+        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
         with:
-          name: scarlet-dev
+          name: ${{ env.CACHIX_CACHE_NAME }}
           authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
 
       - name: Build toolchain
