@@ -75,6 +75,7 @@ stdenv.mkDerivation {
     chmod -R u+w source
     sourceRoot=source
     cd "$sourceRoot"
+    sourceRoot=.
 
     runHook postUnpack
   '';
