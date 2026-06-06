@@ -54,7 +54,6 @@ stdenv.mkDerivation {
   SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
 
   dontUnpack = true;
-  dontConfigure = true;
 
   configurePhase = ''
     runHook preConfigure
@@ -62,6 +61,9 @@ stdenv.mkDerivation {
     cp -R "$src" source
     chmod -R u+w source
     cd source
+
+    test -x ./x
+    test -f library/Cargo.lock
 
     cat > bootstrap.toml <<'EOF'
     change-id = "ignore"
