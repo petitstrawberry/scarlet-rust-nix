@@ -1,0 +1,51 @@
+name: Build Scarlet Rust Toolchain
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            system: x86_64-linux
+          - os: ubuntu-24.04-arm
+            system: aarch64-linux
+          - os: macos-14
+            system: aarch64-darwin
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: petitstrawberry/rust
+          ref: b9573d6cd0731d24486f77ddf24d502e2e6bef02
+          path: rust-src
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - uses: cachix/cachix-action@v15
+        with:
+          name: scarlet-dev
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build toolchain
+        run: nix build .#packages.${{ matrix.system }}.scarlet-rust-toolchain --override-input rust-src path:./rust-src -L --accept-flake-config
+
+      - name: Check toolchain
+        run: nix flake check . --override-input rust-src path:./rust-src --system ${{ matrix.system }} -L --accept-flake-config
