@@ -3,6 +3,7 @@
   stdenv,
   bash,
   cacert,
+  cargo,
   cmake,
   curl,
   git,
@@ -12,6 +13,7 @@
   openssl,
   pkg-config,
   python3,
+  rustc,
   xz,
   zlib,
   rust-src,
@@ -33,6 +35,7 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [
     bash
+    cargo
     cmake
     curl
     git
@@ -40,6 +43,7 @@ stdenv.mkDerivation {
     ninja
     pkg-config
     python3
+    rustc
     xz
   ];
 
@@ -69,7 +73,9 @@ stdenv.mkDerivation {
     change-id = "ignore"
 
     [build]
+    cargo = "${cargo}/bin/cargo"
     patch-binaries-for-nix = true
+    rustc = "${rustc}/bin/rustc"
 
     [llvm]
     download-ci-llvm = false
