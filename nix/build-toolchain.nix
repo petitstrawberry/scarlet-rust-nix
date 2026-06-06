@@ -2,8 +2,8 @@
   lib,
   stdenv,
   bash,
+  bootstrapRust,
   cacert,
-  cargo,
   cmake,
   curl,
   git,
@@ -14,7 +14,6 @@
   pkg-config,
   python3,
   rustPlatform,
-  rustc,
   xz,
   zlib,
   rust-src,
@@ -42,7 +41,7 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [
     bash
-    cargo
+    bootstrapRust
     cmake
     curl
     git
@@ -51,7 +50,6 @@ stdenv.mkDerivation {
     pkg-config
     python3
     rustPlatform.cargoSetupHook
-    rustc
     xz
   ];
 
@@ -91,9 +89,9 @@ stdenv.mkDerivation {
     change-id = "ignore"
 
     [build]
-    cargo = "${cargo}/bin/cargo"
+    cargo = "${bootstrapRust}/bin/cargo"
     patch-binaries-for-nix = true
-    rustc = "${rustc}/bin/rustc"
+    rustc = "${bootstrapRust}/bin/rustc"
 
     [llvm]
     download-ci-llvm = false

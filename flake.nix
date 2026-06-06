@@ -10,6 +10,10 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     rust-src = {
       url = "path:./rust-src-stub";
       flake = false;
@@ -20,6 +24,7 @@
     {
       self,
       nixpkgs,
+      rust-overlay,
       rust-src,
     }:
     let
@@ -48,9 +53,13 @@
       packages = forAllSystems (
         system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ rust-overlay.overlays.default ];
+          };
           scarlet-rust-toolchain = pkgs.callPackage ./nix/build-toolchain.nix {
             inherit rust-src rustRev targetTriples;
+            bootstrapRust = pkgs.rust-bin.stable."1.94.0".minimal;
             hostTriple = hostTriples.${system};
           };
         in
