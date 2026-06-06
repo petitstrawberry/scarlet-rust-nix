@@ -92,9 +92,15 @@ stdenv.mkDerivation {
     cargo = "${bootstrapRust}/bin/cargo"
     patch-binaries-for-nix = true
     rustc = "${bootstrapRust}/bin/rustc"
+    rustfmt = "${bootstrapRust}/bin/rustfmt"
+    extended = false
+    tools = []
 
     [llvm]
     download-ci-llvm = false
+
+    [rust]
+    download-rustc = false
     EOF
 
     runHook postConfigure
