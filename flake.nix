@@ -59,6 +59,7 @@
       noOptimizedCompilerBuiltinsTargetTriples = scarletTargetTriples ++ nixpkgsCompilerTargetTriples;
 
       rustRev = "804637c89bf86d2cdce35db31a08b0aabd98cb08";
+      rustHash = "sha256-OhDUvvpPXJhOA00CjtV8XGv1g90o2R3WTH+ZmMz9Epc=";
       llvmRev = "6865ecb3f8dc308df539210970b7f4008ea70309";
 
       forAllSystems = f: lib.genAttrs systems (system: f system);
@@ -83,7 +84,7 @@
             fetchSubmodules = true;
             deepClone = false;
             leaveDotGit = false;
-            hash = "sha256-OhDUvvpPXJhOA00CjtV8XGv1g90o2R3WTH+ZmMz9Epc=";
+            hash = rustHash;
           };
           llvmSrc = pkgs.fetchgit {
             url = "https://github.com/petitstrawberry/llvm-project.git";

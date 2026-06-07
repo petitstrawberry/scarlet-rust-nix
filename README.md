@@ -56,6 +56,57 @@ nix build .#scarlet-rust-toolchain -L --accept-flake-config
 The Rust fork source is fetched internally with shallow submodule checkout.
 Consumers should not override or supply the fork source themselves.
 
+## Updating the Rust fork revision
+
+This repository treats the Rust fork's `scarlet-target` branch as the packaged
+integration branch. Development commits can happen elsewhere in the Rust fork,
+but only commits promoted to `scarlet-target` should be picked up automatically
+here.
+
+The `Update Scarlet Rust Revision` workflow can be started three ways:
+
+- scheduled check of `petitstrawberry/rust` `scarlet-target`
+- manual `workflow_dispatch`
+- `repository_dispatch` with event type `rust-updated`
+
+The updater does not build the full toolchain directly. It updates `rustRev`
+and `rustHash` in `flake.nix`, opens a PR, and lets the normal build workflow
+validate the toolchain on all supported hosts.
+
+From the Rust fork, trigger this repository after updating the `scarlet-target`
+branch:
+
+```yaml
+name: Trigger Scarlet Rust Nix
+
+on:
+  push:
+    branches: [ "scarlet-target" ]
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger scarlet-rust-nix
+        run: |
+          gh api repos/petitstrawberry/scarlet-rust-nix/dispatches \
+            -f event_type=rust-updated \
+            -F client_payload[rev]="${GITHUB_SHA}" \
+            -F client_payload[ref]="${GITHUB_REF_NAME}"
+        env:
+          GH_TOKEN: ${{ secrets.SCARLET_RUST_NIX_DISPATCH_TOKEN }}
+```
+
+`SCARLET_RUST_NIX_DISPATCH_TOKEN` needs permission to create repository
+dispatch events in `petitstrawberry/scarlet-rust-nix`.
+
+For local updates:
+
+```sh
+scripts/update-rust-rev.sh <full-rust-commit-sha>
+```
+
 The output is a relocatable Rust toolchain:
 
 ```text

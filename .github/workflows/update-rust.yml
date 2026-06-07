@@ -1,0 +1,111 @@
+name: Update Scarlet Rust Revision
+
+on:
+  workflow_dispatch:
+    inputs:
+      rust_rev:
+        description: "Full Rust fork revision to package. If empty, the configured ref is used."
+        required: false
+        type: string
+      rust_ref:
+        description: "Rust fork branch/tag to check when rust-rev is empty."
+        required: false
+        default: "scarlet-target"
+        type: string
+  repository_dispatch:
+    types: [rust-updated]
+  schedule:
+    - cron: "0 18 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-scarlet-rust-revision
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUST_REPOSITORY: petitstrawberry/rust
+      DEFAULT_RUST_REF: scarlet-target
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Resolve Rust revision
+        id: rust
+        run: |
+          set -euo pipefail
+
+          rust_rev="${{ github.event.client_payload.rev || inputs.rust_rev || '' }}"
+          rust_ref="${{ github.event.client_payload.ref || inputs.rust_ref || '' }}"
+          rust_ref="${rust_ref:-${DEFAULT_RUST_REF}}"
+
+          if [ -z "${rust_rev}" ]; then
+            rust_rev="$(gh api "repos/${RUST_REPOSITORY}/commits/${rust_ref}" --jq .sha)"
+          fi
+
+          if ! printf '%s' "${rust_rev}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Invalid Rust revision: ${rust_rev}" >&2
+            exit 1
+          fi
+
+          current_rev="$(sed -n 's/^[[:space:]]*rustRev = "\([0-9a-f]\{40\}\)";/\1/p' flake.nix)"
+          short_rev="$(printf '%s' "${rust_rev}" | cut -c1-12)"
+
+          echo "rev=${rust_rev}" >> "${GITHUB_OUTPUT}"
+          echo "short_rev=${short_rev}" >> "${GITHUB_OUTPUT}"
+          echo "current_rev=${current_rev}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${rust_ref}" >> "${GITHUB_OUTPUT}"
+
+          if [ "${current_rev}" = "${rust_rev}" ]; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Stop when already current
+        if: steps.rust.outputs.changed == 'false'
+        run: echo "scarlet-rust-nix already packages ${{ steps.rust.outputs.rev }}."
+
+      - name: Update flake.nix
+        if: steps.rust.outputs.changed == 'true'
+        run: scripts/update-rust-rev.sh "${{ steps.rust.outputs.rev }}" x86_64-linux
+
+      - name: Create update PR
+        if: steps.rust.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+
+          branch="automation/rust-${{ steps.rust.outputs.short_rev }}"
+          title="Update Scarlet Rust to ${{ steps.rust.outputs.short_rev }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -B "${branch}"
+          git add flake.nix
+          git commit -m "${title}"
+          git push --force-with-lease origin "${branch}"
+
+          if gh pr view "${branch}" --json number >/dev/null 2>&1; then
+            gh pr edit "${branch}" \
+              --title "${title}" \
+              --body "Updates the packaged Scarlet Rust fork revision to ${{ steps.rust.outputs.rev }}."
+          else
+            gh pr create \
+              --base main \
+              --head "${branch}" \
+              --title "${title}" \
+              --body "Updates the packaged Scarlet Rust fork revision to ${{ steps.rust.outputs.rev }}."
+          fi
