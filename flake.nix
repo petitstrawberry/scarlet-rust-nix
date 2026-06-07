@@ -49,6 +49,8 @@
 
       targetTriples = scarletTargetTriples ++ upstreamTargetTriples;
       noOptimizedCompilerBuiltinsTargetTriples = scarletTargetTriples ++ [
+        "riscv64gc-unknown-none-elf"
+        "aarch64-unknown-none"
         "wasm32-unknown-unknown"
         "wasm32-wasip1"
       ];
