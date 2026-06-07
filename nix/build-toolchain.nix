@@ -1,152 +1,106 @@
 {
   lib,
   stdenv,
-  bash,
+  callPackage,
+  llvmPackages,
   bootstrapRust,
-  cacert,
-  cmake,
-  curl,
-  git,
-  gnumake,
-  libffi,
-  ninja,
-  openssl,
-  pkg-config,
-  python3,
-  rustPlatform,
-  xz,
-  zlib,
-  rust-src,
+  nixpkgsPath,
+  vendoredRustSrc,
   rustRev,
   hostTriple,
   targetTriples,
 }:
 
 let
+  version = builtins.substring 0 12 rustRev;
   allTargets = [ hostTriple ] ++ targetTriples;
   targetList = lib.concatStringsSep "," allTargets;
   targetManifest = lib.concatMapStringsSep "\n" (target: ''  "${target}",'') targetTriples;
-  bootstrapCargoDeps = rustPlatform.fetchCargoVendor {
-    name = "scarlet-rust-bootstrap-cargo-deps-${builtins.substring 0 12 rustRev}";
-    src = rust-src;
-    sourceRoot = "source/src/bootstrap";
-    hash = "sha256-xxaYOc4Xn3F3ghDEpFR2041gJ98t4lONJ9Ka1OkzGzI=";
+
+  baseRustc = callPackage "${nixpkgsPath}/pkgs/development/compilers/rust/rustc.nix" {
+    inherit version;
+    sha256 = lib.fakeHash;
+    cargo = bootstrapRust;
+    rustc = bootstrapRust;
+    rustfmt = bootstrapRust;
+    withBundledLLVM = true;
+    enableRustcDev = false;
+    fastCross = false;
+    llvmShared = llvmPackages.llvm;
+    llvmSharedForBuild = llvmPackages.llvm;
+    llvmSharedForHost = llvmPackages.llvm;
+    llvmSharedForTarget = llvmPackages.llvm;
+    inherit llvmPackages;
+    patches = [ ];
   };
+
+  keepNixpkgsConfigureFlag =
+    flag:
+    !(lib.hasPrefix "--release-channel=" flag
+      || lib.hasPrefix "--target=" flag
+      || lib.hasPrefix "--tools=" flag
+      || lib.hasPrefix "--set=build.rustfmt=" flag
+      || lib.hasInfix "target.wasm32-" flag
+      || lib.hasInfix "target.wasm32v1-" flag
+      || lib.hasInfix "target.bpfel-" flag
+      || lib.hasInfix "target.bpfeb-" flag
+      || flag == "--disable-lld"
+      || flag == "--enable-profiler");
 in
-stdenv.mkDerivation {
+baseRustc.overrideAttrs (old: {
   pname = "scarlet-rust-toolchain";
-  version = builtins.substring 0 12 rustRev;
+  inherit version;
 
-  src = rust-src;
+  src = vendoredRustSrc;
 
-  nativeBuildInputs = [
-    bash
-    bootstrapRust
-    cmake
-    curl
-    git
-    gnumake
-    ninja
-    pkg-config
-    python3
-    rustPlatform.cargoSetupHook
-    xz
+  configureFlags = lib.filter keepNixpkgsConfigureFlag old.configureFlags ++ [
+    "--release-channel=nightly"
+    "--set=build.locked-deps=true"
+    "--set=build.patch-binaries-for-nix=true"
+    "--set=build.rustfmt=${bootstrapRust}/bin/rustfmt"
+    "--set=llvm.download-ci-llvm=false"
+    "--set=rust.download-rustc=false"
+    "--target=${targetList}"
+    "--tools=rustc,cargo,rustdoc,rust-analyzer-proc-macro-srv"
   ];
 
-  buildInputs = [
-    libffi
-    openssl
-    zlib
-    xz
-  ];
+  postPatch =
+    ''
+      patchShebangs src/etc
 
-  CARGO_NET_GIT_FETCH_WITH_CLI = "true";
-  SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
+      mkdir -p .cargo
+      cat > .cargo/config.toml <<\EOF
+      [source.crates-io]
+      replace-with = "vendored-sources"
+      [source.vendored-sources]
+      directory = "vendor"
+      EOF
+    ''
+    + lib.optionalString stdenv.hostPlatform.isDarwin ''
+      substituteInPlace compiler/rustc_codegen_ssa/src/back/link.rs \
+        --replace-fail "/usr/bin/strip" "${lib.getExe' llvmPackages.llvm "llvm-strip"}"
+    '';
 
-  cargoDeps = bootstrapCargoDeps;
-  cargoRoot = "src/bootstrap";
+  postInstall =
+    old.postInstall
+    + ''
+      rm -rf "$out/lib/rustlib/src/rust"
+      mkdir -p "$out/lib/rustlib/src/rust"
+      cp -R library "$out/lib/rustlib/src/rust/library"
 
-  unpackPhase = ''
-    runHook preUnpack
+      cat > "$out/manifest.toml" <<EOF
+      schema = 1
+      rust_commit = "${rustRev}"
+      host = "${hostTriple}"
+      targets = [
+      ${targetManifest}
+      ]
+      EOF
+    '';
 
-    cp -R "$src" source
-    chmod -R u+w source
-    sourceRoot=source
-    cd "$sourceRoot"
-    sourceRoot=.
-
-    runHook postUnpack
-  '';
-
-  configurePhase = ''
-    runHook preConfigure
-
-    test -x ./x
-    test -f library/Cargo.lock
-    test -f src/bootstrap/Cargo.lock
-
-    cat > bootstrap.toml <<'EOF'
-    change-id = "ignore"
-
-    [build]
-    cargo = "${bootstrapRust}/bin/cargo"
-    patch-binaries-for-nix = true
-    rustc = "${bootstrapRust}/bin/rustc"
-    rustfmt = "${bootstrapRust}/bin/rustfmt"
-    extended = false
-    tools = []
-
-    [llvm]
-    download-ci-llvm = false
-
-    [rust]
-    download-rustc = false
-    EOF
-
-    runHook postConfigure
-  '';
-
-  buildPhase = ''
-    runHook preBuild
-
-    ./x build compiler/rustc
-    ./x build library/std library/proc_macro library/test --target "${targetList}"
-
-    runHook postBuild
-  '';
-
-  installPhase = ''
-    runHook preInstall
-
-    stage_dir="build/${hostTriple}/stage1"
-    test -x "$stage_dir/bin/rustc"
-    test -x "$stage_dir/bin/cargo"
-
-    mkdir -p "$out"
-    cp -R "$stage_dir/." "$out/"
-
-    rm -rf "$out/lib/rustlib/src/rust"
-    mkdir -p "$out/lib/rustlib/src/rust"
-    cp -R library "$out/lib/rustlib/src/rust/library"
-
-    cat > "$out/manifest.toml" <<EOF
-    schema = 1
-    rust_commit = "${rustRev}"
-    host = "${hostTriple}"
-    targets = [
-    ${targetManifest}
-    ]
-    EOF
-
-    runHook postInstall
-  '';
+  requiredSystemFeatures = [ ];
 
   doInstallCheck = true;
-
-  passthru = {
-    inherit bootstrapCargoDeps;
-  };
-
   installCheckPhase = ''
     runHook preInstallCheck
 
@@ -154,6 +108,7 @@ stdenv.mkDerivation {
     test -x "$out/bin/cargo"
     test -f "$out/manifest.toml"
     test -f "$out/lib/rustlib/src/rust/library/Cargo.lock"
+    test -x "$out/lib/rustlib/${hostTriple}/bin/rust-lld"
 
     for target in ${lib.escapeShellArgs allTargets}; do
       test -d "$out/lib/rustlib/$target/lib"
@@ -165,6 +120,10 @@ stdenv.mkDerivation {
     runHook postInstallCheck
   '';
 
+  passthru = (old.passthru or { }) // {
+    inherit vendoredRustSrc;
+  };
+
   meta = {
     description = "Scarlet Rust fork toolchain";
     homepage = "https://github.com/petitstrawberry/rust";
@@ -174,4 +133,4 @@ stdenv.mkDerivation {
       "aarch64-darwin"
     ];
   };
-}
+})

@@ -2,9 +2,9 @@
   description = "Nix-packaged Scarlet Rust toolchain";
 
   nixConfig = {
-    extra-substituters = [ "https://scarlet-dev.cachix.org" ];
+    extra-substituters = [ "https://scarlet-rust-toolchain.cachix.org" ];
     extra-trusted-public-keys = [
-      "scarlet-dev.cachix.org-1:KXKmR/eHKL9t5D4xGFb5NX5s5uUpVVL7HV9PrLZXFHU="
+      "scarlet-rust-toolchain.cachix.org-1:p+coBExi0nNTIvWF/oM9H9/1/GhwFtqGZ2Vs+4pYl6o="
     ];
   };
 
@@ -67,14 +67,19 @@
               "aarch64-unknown-none"
             ];
           };
+          vendoredRustSrc = pkgs.callPackage ./nix/vendor-rust-src.nix {
+            inherit bootstrapRust rust-src rustRev;
+          };
           scarlet-rust-toolchain = pkgs.callPackage ./nix/build-toolchain.nix {
-            inherit rust-src rustRev targetTriples;
+            inherit vendoredRustSrc rustRev targetTriples;
             inherit bootstrapRust;
+            nixpkgsPath = pkgs.path;
             hostTriple = hostTriples.${system};
           };
         in
         {
-          scarlet-rust-bootstrap-cargo-deps = scarlet-rust-toolchain.bootstrapCargoDeps;
+          scarlet-rust-vendored-src = vendoredRustSrc;
+          scarlet-rust-bootstrap-cargo-deps = vendoredRustSrc;
           inherit scarlet-rust-toolchain;
           default = scarlet-rust-toolchain;
         }
