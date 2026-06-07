@@ -58,6 +58,14 @@ baseRustc.overrideAttrs (old: {
     ninja
   ];
 
+  dontUseNinjaBuild = true;
+  dontUseNinjaInstall = true;
+  dontUseNinjaCheck = true;
+
+  hardeningDisable = (old.hardeningDisable or [ ]) ++ [
+    "zerocallusedregs"
+  ];
+
   configureFlags = lib.filter keepNixpkgsConfigureFlag old.configureFlags ++ [
     "--release-channel=nightly"
     "--set=build.locked-deps=true"

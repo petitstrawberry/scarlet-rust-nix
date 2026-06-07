@@ -39,13 +39,14 @@ jobs:
       - name: Initialize Rust source submodules
         working-directory: rust-src
         run: |
-          git submodule update --init --depth 1 \
-            library/backtrace \
-            src/llvm-project \
-            src/tools/cargo \
-            src/tools/rustc-perf \
-            src/doc/book \
-            src/doc/reference
+          git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
+            | awk '{ print $2 }' \
+            > ../rust-submodules.txt
+
+          while IFS= read -r submodule
+          do
+            git submodule update --init --depth 1 -- "$submodule"
+          done < ../rust-submodules.txt
 
       - name: Create clean Rust source tree
         working-directory: rust-src
@@ -53,17 +54,11 @@ jobs:
           mkdir -p ../rust-source-clean
           git archive --format=tar HEAD | tar -xf - -C ../rust-source-clean
 
-          for submodule in \
-            library/backtrace \
-            src/llvm-project \
-            src/tools/cargo \
-            src/tools/rustc-perf \
-            src/doc/book \
-            src/doc/reference
+          while IFS= read -r submodule
           do
             mkdir -p "../rust-source-clean/$submodule"
             git -C "$submodule" archive --format=tar HEAD | tar -xf - -C "../rust-source-clean/$submodule"
-          done
+          done < ../rust-submodules.txt
 
       - uses: cachix/install-nix-action@v31
         with:
@@ -76,6 +71,9 @@ jobs:
         with:
           name: ${{ env.CACHIX_CACHE_NAME }}
           authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build vendored Rust source
+        run: nix build .#packages.${{ matrix.system }}.scarlet-rust-vendored-src --override-input rust-src path:./rust-source-clean -L --accept-flake-config
 
       - name: Build toolchain
         run: nix build .#packages.${{ matrix.system }}.scarlet-rust-toolchain --override-input rust-src path:./rust-source-clean -L --accept-flake-config
