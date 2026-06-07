@@ -3,6 +3,7 @@
   stdenv,
   callPackage,
   llvmPackages,
+  ninja,
   bootstrapRust,
   nixpkgsPath,
   vendoredRustSrc,
@@ -52,6 +53,10 @@ baseRustc.overrideAttrs (old: {
   inherit version;
 
   src = vendoredRustSrc;
+
+  nativeBuildInputs = old.nativeBuildInputs ++ [
+    ninja
+  ];
 
   configureFlags = lib.filter keepNixpkgsConfigureFlag old.configureFlags ++ [
     "--release-channel=nightly"

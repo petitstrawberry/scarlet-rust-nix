@@ -8,6 +8,13 @@
   rustRev,
 }:
 
+let
+  outputHashes = {
+    x86_64-linux = "sha256-fGGo38wFyRs1zaRYeSN+/fhubvkY+/dWUiimi3/0Foc=";
+    aarch64-linux = "sha256-fGGo38wFyRs1zaRYeSN+/fhubvkY+/dWUiimi3/0Foc=";
+    aarch64-darwin = "sha256-be59t0qkaG455gBhCi5DWFiTP8I64Rj67xDjsTO/YU4=";
+  };
+in
 stdenvNoCC.mkDerivation {
   pname = "scarlet-rust-src-vendored";
   version = builtins.substring 0 12 rustRev;
@@ -21,7 +28,9 @@ stdenvNoCC.mkDerivation {
 
   outputHashAlgo = "sha256";
   outputHashMode = "recursive";
-  outputHash = "sha256-be59t0qkaG455gBhCi5DWFiTP8I64Rj67xDjsTO/YU4=";
+  outputHash =
+    outputHashes.${stdenvNoCC.hostPlatform.system}
+      or (throw "unsupported Scarlet Rust vendored source host: ${stdenvNoCC.hostPlatform.system}");
 
   CARGO_NET_GIT_FETCH_WITH_CLI = "true";
   CARGO_HTTP_CAINFO = "${cacert}/etc/ssl/certs/ca-bundle.crt";
