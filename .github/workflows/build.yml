@@ -28,38 +28,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
-        with:
-          repository: petitstrawberry/rust
-          ref: b9573d6cd0731d24486f77ddf24d502e2e6bef02
-          path: rust-src
-          submodules: false
-          fetch-depth: 1
-
-      - name: Initialize Rust source submodules
-        working-directory: rust-src
-        run: |
-          git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
-            | awk '{ print $2 }' \
-            > ../rust-submodules.txt
-
-          while IFS= read -r submodule
-          do
-            git submodule update --init --depth 1 -- "$submodule"
-          done < ../rust-submodules.txt
-
-      - name: Create clean Rust source tree
-        working-directory: rust-src
-        run: |
-          mkdir -p ../rust-source-clean
-          git archive --format=tar HEAD | tar -xf - -C ../rust-source-clean
-
-          while IFS= read -r submodule
-          do
-            mkdir -p "../rust-source-clean/$submodule"
-            git -C "$submodule" archive --format=tar HEAD | tar -xf - -C "../rust-source-clean/$submodule"
-          done < ../rust-submodules.txt
-
       - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: |
@@ -73,10 +41,13 @@ jobs:
           authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
 
       - name: Build vendored Rust source
-        run: nix build .#packages.${{ matrix.system }}.scarlet-rust-vendored-src --override-input rust-src path:./rust-source-clean -L --accept-flake-config
+        run: nix build .#packages.${{ matrix.system }}.scarlet-rust-vendored-src -L --accept-flake-config
+
+      - name: Build Scarlet LLVM
+        run: nix build .#packages.${{ matrix.system }}.scarlet-llvm -L --accept-flake-config
 
       - name: Build toolchain
-        run: nix build .#packages.${{ matrix.system }}.scarlet-rust-toolchain --override-input rust-src path:./rust-source-clean -L --accept-flake-config
+        run: nix build .#packages.${{ matrix.system }}.scarlet-rust-toolchain -L --accept-flake-config
 
       - name: Check toolchain
-        run: nix flake check . --override-input rust-src path:./rust-source-clean --system ${{ matrix.system }} -L --accept-flake-config
+        run: nix flake check . --system ${{ matrix.system }} -L --accept-flake-config

@@ -14,10 +14,6 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    rust-src = {
-      url = "path:./rust-src-stub";
-      flake = false;
-    };
   };
 
   outputs =
@@ -25,7 +21,6 @@
       self,
       nixpkgs,
       rust-overlay,
-      rust-src,
     }:
     let
       systems = [
@@ -45,7 +40,8 @@
         "aarch64-unknown-scarlet"
       ];
 
-      rustRev = "b9573d6cd0731d24486f77ddf24d502e2e6bef02";
+      rustRev = "804637c89bf86d2cdce35db31a08b0aabd98cb08";
+      llvmRev = "6865ecb3f8dc308df539210970b7f4008ea70309";
 
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system);
     in
@@ -67,17 +63,42 @@
               "aarch64-unknown-none"
             ];
           };
+          rustSrc = pkgs.fetchgit {
+            url = "https://github.com/petitstrawberry/rust.git";
+            rev = rustRev;
+            fetchSubmodules = true;
+            deepClone = false;
+            leaveDotGit = false;
+            hash = "sha256-OhDUvvpPXJhOA00CjtV8XGv1g90o2R3WTH+ZmMz9Epc=";
+          };
+          llvmSrc = pkgs.fetchgit {
+            url = "https://github.com/petitstrawberry/llvm-project.git";
+            rev = llvmRev;
+            fetchSubmodules = false;
+            deepClone = false;
+            leaveDotGit = false;
+            hash = "sha256-pjOaNaKjmt4ls0MmPnouqOjM+ERaqNj7mj3RkyWxykA=";
+          };
+          scarletLlvmPackages = pkgs.llvmPackages_21.override {
+            monorepoSrc = llvmSrc;
+          };
           vendoredRustSrc = pkgs.callPackage ./nix/vendor-rust-src.nix {
-            inherit bootstrapRust rust-src rustRev;
+            inherit bootstrapRust rustRev;
+            rust-src = rustSrc;
           };
           scarlet-rust-toolchain = pkgs.callPackage ./nix/build-toolchain.nix {
             inherit vendoredRustSrc rustRev targetTriples;
             inherit bootstrapRust;
             nixpkgsPath = pkgs.path;
+            llvmPackages = scarletLlvmPackages;
             hostTriple = hostTriples.${system};
           };
         in
         {
+          scarlet-rust-source = rustSrc;
+          scarlet-llvm-source = llvmSrc;
+          scarlet-llvm = scarletLlvmPackages.llvm;
+          scarlet-lld = scarletLlvmPackages.lld;
           scarlet-rust-vendored-src = vendoredRustSrc;
           scarlet-rust-bootstrap-cargo-deps = vendoredRustSrc;
           inherit scarlet-rust-toolchain;

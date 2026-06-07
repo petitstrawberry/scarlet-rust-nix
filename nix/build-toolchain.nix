@@ -24,7 +24,7 @@ let
     cargo = bootstrapRust;
     rustc = bootstrapRust;
     rustfmt = bootstrapRust;
-    withBundledLLVM = true;
+    withBundledLLVM = false;
     enableRustcDev = false;
     fastCross = false;
     llvmShared = llvmPackages.llvm;
@@ -45,7 +45,6 @@ let
       || lib.hasInfix "target.wasm32v1-" flag
       || lib.hasInfix "target.bpfel-" flag
       || lib.hasInfix "target.bpfeb-" flag
-      || flag == "--disable-lld"
       || flag == "--enable-profiler");
 in
 baseRustc.overrideAttrs (old: {
@@ -109,6 +108,10 @@ baseRustc.overrideAttrs (old: {
       ${targetManifest}
       ]
       EOF
+
+      mkdir -p "$out/bin" "$out/lib/rustlib/${hostTriple}/bin"
+      ln -sf ${lib.getExe' llvmPackages.lld "lld"} "$out/bin/rust-lld"
+      ln -sf ${lib.getExe' llvmPackages.lld "lld"} "$out/lib/rustlib/${hostTriple}/bin/rust-lld"
     '';
 
   requiredSystemFeatures = [ ];

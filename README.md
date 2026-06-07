@@ -6,6 +6,10 @@ This repository owns the Nix build and cache contract for the Rust fork used by
 Scarlet. Scarlet itself should consume the cached package from this flake and
 must not build the Rust fork in normal CI.
 
+The Scarlet LLVM fork is packaged separately from the Rust toolchain. Updating
+the Rust fork revision does not force an LLVM rebuild unless the LLVM revision
+also changes.
+
 ## Supported hosts
 
 - `x86_64-linux` (`x86_64-unknown-linux-gnu`)
@@ -30,13 +34,15 @@ the Rust fork in the Scarlet repository.
 
 ## Build
 
-For local source builds, provide the Rust fork source as the `rust-src` input:
+Build the fixed Scarlet Rust fork revision configured in `flake.nix`:
 
 ```sh
-git clone --recursive https://github.com/petitstrawberry/rust.git rust-src
-git -C rust-src checkout b9573d6cd0731d24486f77ddf24d502e2e6bef02
-nix build .#scarlet-rust-toolchain --override-input rust-src path:./rust-src -L
+nix build .#scarlet-llvm -L --accept-flake-config
+nix build .#scarlet-rust-toolchain -L --accept-flake-config
 ```
+
+The Rust fork source is fetched internally with shallow submodule checkout.
+Consumers should not override or supply the fork source themselves.
 
 The output is a relocatable Rust toolchain:
 
