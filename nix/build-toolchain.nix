@@ -80,13 +80,15 @@ baseRustc.overrideAttrs (old: {
     ''
       patchShebangs src/etc
 
-      mkdir -p .cargo
-      cat > .cargo/config.toml <<\EOF
+      if [ ! -f .cargo/config.toml ]; then
+        mkdir -p .cargo
+        cat > .cargo/config.toml <<\EOF
       [source.crates-io]
       replace-with = "vendored-sources"
       [source.vendored-sources]
       directory = "vendor"
       EOF
+      fi
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       substituteInPlace compiler/rustc_codegen_ssa/src/back/link.rs \
