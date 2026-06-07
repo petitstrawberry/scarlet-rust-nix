@@ -75,7 +75,12 @@ baseRustcStd.overrideAttrs (old: {
     test -n "$libstd_src"
 
     librustc_src=
-    for candidate in "$rustlib"/lib/librustc_driver-*.so "$rustlib"/lib/librustc_driver-*.dylib; do
+    for candidate in \
+      "$rustlib"/lib/librustc_driver-*.so \
+      "$rustlib"/lib/librustc_driver-*.dylib \
+      ${rustcForBuild.unwrapped}/lib/librustc_driver-*.so \
+      ${rustcForBuild.unwrapped}/lib/librustc_driver-*.dylib
+    do
       if [ -e "$candidate" ]; then
         librustc_src="$candidate"
         break
