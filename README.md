@@ -20,6 +20,18 @@ Each host toolchain contains libraries for:
 
 - `riscv64gc-unknown-scarlet`
 - `aarch64-unknown-scarlet`
+- `riscv64gc-unknown-none-elf`
+- `aarch64-unknown-none`
+- `wasm32-unknown-unknown`
+- `wasm32-wasip1`
+
+The compiler build follows nixpkgs' Rust packaging split:
+
+- `scarlet-rustc` builds the host compiler plus Scarlet targets with the
+  Scarlet Rust and LLVM forks.
+- Existing upstream targets are built as target std-only outputs through the
+  nixpkgs cross/fastCross path where applicable, then assembled into the final
+  `scarlet-rust-toolchain`.
 
 ## Consumer rule
 
@@ -54,6 +66,10 @@ $out/
     <host-triple>/
     riscv64gc-unknown-scarlet/
     aarch64-unknown-scarlet/
+    riscv64gc-unknown-none-elf/
+    aarch64-unknown-none/
+    wasm32-unknown-unknown/
+    wasm32-wasip1/
     src/rust/library/
   manifest.toml
 ```

@@ -23,6 +23,7 @@
       rust-overlay,
     }:
     let
+      lib = nixpkgs.lib;
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -47,18 +48,20 @@
         "wasm32-wasip1"
       ];
 
+      nixpkgsCompilerTargetTriples = [
+        "wasm32-unknown-unknown"
+      ];
       targetTriples = scarletTargetTriples ++ upstreamTargetTriples;
-      noOptimizedCompilerBuiltinsTargetTriples = scarletTargetTriples ++ [
+      noStdTargetTriples = [
         "riscv64gc-unknown-none-elf"
         "aarch64-unknown-none"
-        "wasm32-unknown-unknown"
-        "wasm32-wasip1"
       ];
+      noOptimizedCompilerBuiltinsTargetTriples = scarletTargetTriples ++ nixpkgsCompilerTargetTriples;
 
       rustRev = "804637c89bf86d2cdce35db31a08b0aabd98cb08";
       llvmRev = "6865ecb3f8dc308df539210970b7f4008ea70309";
 
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system);
+      forAllSystems = f: lib.genAttrs systems (system: f system);
     in
     {
       packages = forAllSystems (
@@ -72,10 +75,6 @@
             extensions = [
               "rust-src"
               "llvm-tools-preview"
-            ];
-            targets = [
-              "riscv64gc-unknown-none-elf"
-              "aarch64-unknown-none"
             ];
           };
           rustSrc = pkgs.fetchgit {
@@ -101,12 +100,40 @@
             inherit bootstrapRust rustRev;
             rust-src = rustSrc;
           };
-          scarlet-rust-toolchain = pkgs.callPackage ./nix/build-toolchain.nix {
-            inherit vendoredRustSrc rustRev targetTriples noOptimizedCompilerBuiltinsTargetTriples;
+          scarlet-rustc = pkgs.callPackage ./nix/build-toolchain.nix {
+            inherit vendoredRustSrc rustRev noOptimizedCompilerBuiltinsTargetTriples;
             inherit bootstrapRust;
             nixpkgsPath = pkgs.path;
             llvmPackages = scarletLlvmPackages;
-            wasiLibc = pkgs.pkgsCross.wasi32.stdenv.cc.libc;
+            hostTriple = hostTriples.${system};
+            targetTriples = scarletTargetTriples ++ nixpkgsCompilerTargetTriples;
+          };
+          targetStdScopes = {
+            riscv64gc-unknown-none-elf = pkgs.pkgsCross.riscv64-embedded.buildPackages;
+            aarch64-unknown-none = pkgs.pkgsCross.aarch64-embedded.buildPackages;
+            wasm32-wasip1 = pkgs.pkgsCross.wasi32.buildPackages;
+          };
+          targetStdPackages = lib.mapAttrsToList (target: scope: {
+            inherit target;
+            package = scope.callPackage ./nix/build-target-std.nix {
+              inherit
+                bootstrapRust
+                vendoredRustSrc
+                rustRev
+                ;
+              nixpkgsPath = pkgs.path;
+              baseRustc = scarlet-rustc;
+              llvmPackages = scarletLlvmPackages;
+            };
+          }) targetStdScopes;
+          scarlet-rust-toolchain = pkgs.callPackage ./nix/combine-toolchain.nix {
+            inherit
+              rustRev
+              targetTriples
+              noStdTargetTriples
+              targetStdPackages
+              ;
+            baseToolchain = scarlet-rustc;
             hostTriple = hostTriples.${system};
           };
         in
@@ -117,6 +144,7 @@
           scarlet-lld = scarletLlvmPackages.lld;
           scarlet-rust-vendored-src = vendoredRustSrc;
           scarlet-rust-bootstrap-cargo-deps = vendoredRustSrc;
+          inherit scarlet-rustc;
           inherit scarlet-rust-toolchain;
           default = scarlet-rust-toolchain;
         }
@@ -127,6 +155,11 @@
         let
           toolchain = self.packages.${system}.scarlet-rust-toolchain;
           pkgs = import nixpkgs { inherit system; };
+          allCheckedTargets = [ hostTriples.${system} ] ++ targetTriples;
+          stdCheckedTargets = [
+            hostTriples.${system}
+          ]
+          ++ (lib.subtractLists noStdTargetTriples targetTriples);
         in
         {
           manifest = pkgs.runCommand "scarlet-rust-toolchain-manifest-check" { } ''
@@ -134,13 +167,13 @@
             test -x ${toolchain}/bin/cargo
             test -f ${toolchain}/manifest.toml
             test -f ${toolchain}/lib/rustlib/src/rust/library/Cargo.lock
-            test -d ${toolchain}/lib/rustlib/${hostTriples.${system}}/lib
-            test -d ${toolchain}/lib/rustlib/riscv64gc-unknown-scarlet/lib
-            test -d ${toolchain}/lib/rustlib/aarch64-unknown-scarlet/lib
-            test -d ${toolchain}/lib/rustlib/riscv64gc-unknown-none-elf/lib
-            test -d ${toolchain}/lib/rustlib/aarch64-unknown-none/lib
-            test -d ${toolchain}/lib/rustlib/wasm32-unknown-unknown/lib
-            test -d ${toolchain}/lib/rustlib/wasm32-wasip1/lib
+            for target in ${lib.escapeShellArgs allCheckedTargets}; do
+              test -d ${toolchain}/lib/rustlib/$target/lib
+              find ${toolchain}/lib/rustlib/$target/lib -maxdepth 1 -name 'libcore-*.rlib' -type f | grep -q .
+            done
+            for target in ${lib.escapeShellArgs stdCheckedTargets}; do
+              find ${toolchain}/lib/rustlib/$target/lib -maxdepth 1 -name 'libstd-*.rlib' -type f | grep -q .
+            done
             ${toolchain}/bin/rustc -vV
             touch $out
           '';
