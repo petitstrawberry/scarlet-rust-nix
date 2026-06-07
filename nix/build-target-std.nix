@@ -95,7 +95,7 @@ baseRustcStd.overrideAttrs (old: {
     touch "$stage/stage0-std/$host/release/.libstd-stamp"
     touch "$stage/stage0-rustc/$host/release/.librustc-stamp" "$stage/stage1-rustc/$host/release/.librustc-stamp"
 
-    python ./x.py --keep-stage=0 --stage=1 build library
+    python ./x.py --keep-stage=0 --stage=1 build library/std
 
     runHook postBuild
   '';
