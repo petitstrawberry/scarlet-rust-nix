@@ -35,9 +35,21 @@
         aarch64-darwin = "aarch64-apple-darwin";
       };
 
-      targetTriples = [
+      scarletTargetTriples = [
         "riscv64gc-unknown-scarlet"
         "aarch64-unknown-scarlet"
+      ];
+
+      upstreamTargetTriples = [
+        "riscv64gc-unknown-none-elf"
+        "aarch64-unknown-none"
+        "wasm32-unknown-unknown"
+        "wasm32-wasip1"
+      ];
+
+      targetTriples = scarletTargetTriples ++ upstreamTargetTriples;
+      noOptimizedCompilerBuiltinsTargetTriples = scarletTargetTriples ++ [
+        "wasm32-unknown-unknown"
       ];
 
       rustRev = "804637c89bf86d2cdce35db31a08b0aabd98cb08";
@@ -87,10 +99,11 @@
             rust-src = rustSrc;
           };
           scarlet-rust-toolchain = pkgs.callPackage ./nix/build-toolchain.nix {
-            inherit vendoredRustSrc rustRev targetTriples;
+            inherit vendoredRustSrc rustRev targetTriples noOptimizedCompilerBuiltinsTargetTriples;
             inherit bootstrapRust;
             nixpkgsPath = pkgs.path;
             llvmPackages = scarletLlvmPackages;
+            wasiLibc = pkgs.pkgsCross.wasi32.stdenv.cc.libc;
             hostTriple = hostTriples.${system};
           };
         in
@@ -121,6 +134,10 @@
             test -d ${toolchain}/lib/rustlib/${hostTriples.${system}}/lib
             test -d ${toolchain}/lib/rustlib/riscv64gc-unknown-scarlet/lib
             test -d ${toolchain}/lib/rustlib/aarch64-unknown-scarlet/lib
+            test -d ${toolchain}/lib/rustlib/riscv64gc-unknown-none-elf/lib
+            test -d ${toolchain}/lib/rustlib/aarch64-unknown-none/lib
+            test -d ${toolchain}/lib/rustlib/wasm32-unknown-unknown/lib
+            test -d ${toolchain}/lib/rustlib/wasm32-wasip1/lib
             ${toolchain}/bin/rustc -vV
             touch $out
           '';
