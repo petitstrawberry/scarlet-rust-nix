@@ -78,6 +78,7 @@ baseRustc.overrideAttrs (old: {
       "--set=build.patch-binaries-for-nix=true"
       "--set=build.rustfmt=${bootstrapRust}/bin/rustfmt"
       "--set=llvm.download-ci-llvm=false"
+      "--set=rust.deny-warnings=false"
       "--set=rust.download-rustc=false"
       "--set=target.wasm32-wasip1.wasi-root=${wasiLibc}"
       "--target=${targetList}"
