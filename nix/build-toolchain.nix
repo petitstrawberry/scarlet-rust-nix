@@ -17,6 +17,9 @@ let
   allTargets = [ hostTriple ] ++ targetTriples;
   targetList = lib.concatStringsSep "," allTargets;
   targetManifest = lib.concatMapStringsSep "\n" (target: ''  "${target}",'') targetTriples;
+  targetConfigureFlags = lib.concatMap (target: [
+    "--set=target.${target}.optimized-compiler-builtins=false"
+  ]) targetTriples;
 
   baseRustc = callPackage "${nixpkgsPath}/pkgs/development/compilers/rust/rustc.nix" {
     inherit version;
@@ -65,16 +68,19 @@ baseRustc.overrideAttrs (old: {
     "zerocallusedregs"
   ];
 
-  configureFlags = lib.filter keepNixpkgsConfigureFlag old.configureFlags ++ [
-    "--release-channel=nightly"
-    "--set=build.locked-deps=true"
-    "--set=build.patch-binaries-for-nix=true"
-    "--set=build.rustfmt=${bootstrapRust}/bin/rustfmt"
-    "--set=llvm.download-ci-llvm=false"
-    "--set=rust.download-rustc=false"
-    "--target=${targetList}"
-    "--tools=rustc,cargo,rustdoc,rust-analyzer-proc-macro-srv"
-  ];
+  configureFlags =
+    lib.filter keepNixpkgsConfigureFlag old.configureFlags
+    ++ [
+      "--release-channel=nightly"
+      "--set=build.locked-deps=true"
+      "--set=build.patch-binaries-for-nix=true"
+      "--set=build.rustfmt=${bootstrapRust}/bin/rustfmt"
+      "--set=llvm.download-ci-llvm=false"
+      "--set=rust.download-rustc=false"
+      "--target=${targetList}"
+      "--tools=rustc,cargo,rustdoc,rust-analyzer-proc-macro-srv"
+    ]
+    ++ targetConfigureFlags;
 
   postPatch =
     ''
