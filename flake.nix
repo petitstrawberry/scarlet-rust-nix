@@ -50,6 +50,7 @@
       targetTriples = scarletTargetTriples ++ upstreamTargetTriples;
       noOptimizedCompilerBuiltinsTargetTriples = scarletTargetTriples ++ [
         "wasm32-unknown-unknown"
+        "wasm32-wasip1"
       ];
 
       rustRev = "804637c89bf86d2cdce35db31a08b0aabd98cb08";
