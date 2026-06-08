@@ -1,0 +1,63 @@
+name: Purge Cachix Cache
+
+on:
+  workflow_dispatch:
+
+jobs:
+  purge:
+    name: Purge stale cache entries
+    runs-on: ubuntu-latest
+    env:
+      CACHIX_CACHE_NAME: ${{ vars.CACHIX_CACHE_NAME }}
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    steps:
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - uses: cachix/cachix-action@v15
+        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
+        with:
+          name: ${{ env.CACHIX_CACHE_NAME }}
+          authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
+          pushFilter: ".*"
+
+      - uses: actions/checkout@v4
+
+      - name: Resolve current store paths
+        id: current
+        run: |
+          LLVM="$(nix path-info .#packages.x86_64-linux.scarlet-llvm --accept-flake-config)"
+          TC_X86="$(nix path-info .#packages.x86_64-linux.scarlet-rust-toolchain --accept-flake-config)"
+          TC_ARM64="$(nix path-info .#packages.aarch64-linux.scarlet-rust-toolchain --accept-flake-config)"
+          TC_DARWIN="$(nix path-info .#packages.aarch64-darwin.scarlet-rust-toolchain --accept-flake-config)"
+          {
+            echo "llvm=$LLVM"
+            echo "tc_x86=$TC_X86"
+            echo "tc_arm64=$TC_ARM64"
+            echo "tc_darwin=$TC_DARWIN"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Delete stale cache entries
+        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
+        run: |
+          KEEP="$LLVM $TC_X86 $TC_ARM64 $TC_DARWIN"
+          echo "=== Keeping ==="
+          for p in $KEEP; do echo "  $p"; done
+          echo ""
+          echo "=== Scanning cache ==="
+          cachix list-paths "$CACHIX_CACHE_NAME" | while read -r path; do
+            case " $KEEP " in
+              *" $path "*) echo "KEEP   $path" ;;
+              *)           echo "DELETE $path"; cachix delete "$CACHIX_CACHE_NAME" "$path" || true ;;
+            esac
+          done
+          echo ""
+          echo "=== Done ==="
+        env:
+          LLVM: ${{ steps.current.outputs.llvm }}
+          TC_X86: ${{ steps.current.outputs.tc_x86 }}
+          TC_ARM64: ${{ steps.current.outputs.tc_arm64 }}
+          TC_DARWIN: ${{ steps.current.outputs.tc_darwin }}
