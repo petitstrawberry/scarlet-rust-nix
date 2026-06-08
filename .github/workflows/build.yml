@@ -34,15 +34,6 @@ jobs:
             experimental-features = nix-command flakes
             accept-flake-config = true
 
-      - uses: cachix/cachix-action@v15
-        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
-        with:
-          name: ${{ env.CACHIX_CACHE_NAME }}
-          authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
-
-      - name: Build vendored Rust source
-        run: nix build .#packages.${{ matrix.system }}.scarlet-rust-vendored-src -L --accept-flake-config
-
       - name: Build Scarlet LLVM
         run: nix build .#packages.${{ matrix.system }}.scarlet-llvm -L --accept-flake-config
 
@@ -51,3 +42,10 @@ jobs:
 
       - name: Check toolchain
         run: nix flake check . --system ${{ matrix.system }} -L --accept-flake-config
+
+      - name: Push to cachix
+        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
+        run: |
+          cachix push "$CACHIX_CACHE_NAME" \
+            "$(nix path-info .#packages.${{ matrix.system }}.scarlet-llvm --accept-flake-config)" \
+            "$(nix path-info .#packages.${{ matrix.system }}.scarlet-rust-toolchain --accept-flake-config)"
