@@ -53,8 +53,9 @@ jobs:
       - name: Pin latest toolchain
         if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
         run: |
-          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}-llvm" \
-            "$(nix eval --raw .#packages.${{ matrix.system }}.scarlet-llvm.outPath --accept-flake-config)"
-          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}-toolchain" \
-            "$(nix eval --raw .#packages.${{ matrix.system }}.scarlet-rust-toolchain.outPath --accept-flake-config)"
+          LLVM_PATH="$(nix path-info .#packages.${{ matrix.system }}.scarlet-llvm --accept-flake-config)"
+          TC_PATH="$(nix path-info .#packages.${{ matrix.system }}.scarlet-rust-toolchain --accept-flake-config)"
+          cachix push "$CACHIX_CACHE_NAME" "$LLVM_PATH" "$TC_PATH"
+          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}-llvm" "$LLVM_PATH"
+          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}-toolchain" "$TC_PATH"
 
