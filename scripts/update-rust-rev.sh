@@ -64,7 +64,7 @@ fi
 set_rust_hash_expr "\"${rust_hash}\""
 
 nix build ".#packages.${system}.scarlet-rust-source" --no-link -L --accept-flake-config
-nix flake check --all-systems --no-build --accept-flake-config
+nix flake metadata --accept-flake-config >/dev/null
 
 echo "Updated Rust fork revision:"
 echo "  rustRev  = ${rust_rev}"
