@@ -60,7 +60,6 @@
 
       rustRev = "ec49edfc2e73e74f13e146ae79e27c621b82b5c3";
       rustHash = "sha256-IlIVyjSVo2gi2tnrcaBK7oHHPMJrkAEZsqmI3k7es30=";
-      llvmRev = "6865ecb3f8dc308df539210970b7f4008ea70309";
 
       forAllSystems = f: lib.genAttrs systems (system: f system);
     in
@@ -86,26 +85,15 @@
             leaveDotGit = false;
             hash = rustHash;
           };
-          llvmSrc = pkgs.fetchgit {
-            url = "https://github.com/petitstrawberry/llvm-project.git";
-            rev = llvmRev;
-            fetchSubmodules = false;
-            deepClone = false;
-            leaveDotGit = false;
-            hash = "sha256-pjOaNaKjmt4ls0MmPnouqOjM+ERaqNj7mj3RkyWxykA=";
-          };
-          scarletLlvmPackages = pkgs.llvmPackages_21.override {
-            monorepoSrc = llvmSrc;
-          };
+          llvmPackages = pkgs.llvmPackages_21;
           vendoredRustSrc = pkgs.callPackage ./nix/vendor-rust-src.nix {
             inherit bootstrapRust rustRev;
             rust-src = rustSrc;
           };
           scarlet-rustc = pkgs.callPackage ./nix/build-toolchain.nix {
             inherit vendoredRustSrc rustRev noOptimizedCompilerBuiltinsTargetTriples;
-            inherit bootstrapRust;
+            inherit bootstrapRust llvmPackages;
             nixpkgsPath = pkgs.path;
-            llvmPackages = scarletLlvmPackages;
             hostTriple = hostTriples.${system};
             targetTriples = scarletTargetTriples ++ nixpkgsCompilerTargetTriples;
           };
@@ -121,10 +109,10 @@
                 bootstrapRust
                 vendoredRustSrc
                 rustRev
+                llvmPackages
                 ;
               nixpkgsPath = pkgs.path;
               baseRustc = scarlet-rustc;
-              llvmPackages = scarletLlvmPackages;
             };
           }) targetStdScopes;
           scarlet-rust-toolchain = pkgs.callPackage ./nix/combine-toolchain.nix {
@@ -140,9 +128,8 @@
         in
         {
           scarlet-rust-source = rustSrc;
-          scarlet-llvm-source = llvmSrc;
-          scarlet-llvm = scarletLlvmPackages.llvm;
-          scarlet-lld = scarletLlvmPackages.lld;
+          scarlet-llvm = llvmPackages.llvm;
+          scarlet-lld = llvmPackages.lld;
           scarlet-rust-vendored-src = vendoredRustSrc;
           scarlet-rust-bootstrap-cargo-deps = vendoredRustSrc;
           inherit scarlet-rustc;
