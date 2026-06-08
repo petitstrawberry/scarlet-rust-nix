@@ -96,10 +96,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          remote_head="$(git ls-remote --heads origin "${branch}" | cut -f1)"
+
           git checkout -B "${branch}"
           git add flake.nix
           git commit -m "${title}"
-          git push --force-with-lease origin "${branch}"
+
+          if [ -n "${remote_head}" ]; then
+            git push --force-with-lease="refs/heads/${branch}:${remote_head}" origin "${branch}"
+          else
+            git push origin "${branch}"
+          fi
 
           if [ -z "${PR_TOKEN}" ]; then
             echo "::error::SCARLET_RUST_NIX_UPDATE_TOKEN is required to create or update pull requests from GitHub Actions."
