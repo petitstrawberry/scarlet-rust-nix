@@ -57,9 +57,9 @@ jobs:
           TC_PATH="$(nix path-info .#packages.${{ matrix.system }}.scarlet-rust-toolchain --accept-flake-config | head -1)"
 
           echo "Pushing LLVM: ${LLVM_PATH}"
-          nix copy --to "https://${CACHIX_CACHE_NAME}.cachix.org" "$LLVM_PATH"
+          cachix push "$CACHIX_CACHE_NAME" "$LLVM_PATH"
           echo "Pushing toolchain: ${TC_PATH}"
-          nix copy --to "https://${CACHIX_CACHE_NAME}.cachix.org" "$TC_PATH"
+          cachix push "$CACHIX_CACHE_NAME" "$TC_PATH"
 
           echo "Pinning..."
           cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}-llvm" "$LLVM_PATH"
