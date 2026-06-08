@@ -10,9 +10,9 @@
 
 let
   outputHashes = {
-    x86_64-linux = "sha256-mf9RMjGmk2oeHo3m9PlKovV6ZEZcVhBvsIigl5FNd0s=";
-    aarch64-linux = "sha256-mf9RMjGmk2oeHo3m9PlKovV6ZEZcVhBvsIigl5FNd0s=";
-    aarch64-darwin = "sha256-mf9RMjGmk2oeHo3m9PlKovV6ZEZcVhBvsIigl5FNd0s=";
+    x86_64-linux = "sha256-tbr3oAFcz3auWH5AZ0Rk5CkIcrGsSl1KGsbiWqy7yMY=";
+    aarch64-linux = "sha256-tbr3oAFcz3auWH5AZ0Rk5CkIcrGsSl1KGsbiWqy7yMY=";
+    aarch64-darwin = "sha256-tbr3oAFcz3auWH5AZ0Rk5CkIcrGsSl1KGsbiWqy7yMY=";
   };
 in
 stdenvNoCC.mkDerivation {
@@ -62,8 +62,10 @@ stdenvNoCC.mkDerivation {
     RUSTC="${bootstrapRust}/bin/rustc" \
     cargo vendor \
       --sync src/tools/cargo/Cargo.toml \
+      --sync src/tools/clippy/Cargo.toml \
       --sync src/tools/clippy/clippy_test_deps/Cargo.toml \
       --sync src/tools/rust-analyzer/Cargo.toml \
+      --sync src/tools/rustfmt/Cargo.toml \
       --sync compiler/rustc_codegen_cranelift/Cargo.toml \
       --sync compiler/rustc_codegen_gcc/Cargo.toml \
       --sync library/Cargo.toml \

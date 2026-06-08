@@ -166,6 +166,11 @@
           manifest = pkgs.runCommand "scarlet-rust-toolchain-manifest-check" { } ''
             test -x ${toolchain}/bin/rustc
             test -x ${toolchain}/bin/cargo
+            for tool in rustc cargo rustdoc rustfmt cargo-fmt clippy-driver cargo-clippy rust-analyzer; do
+              test -x ${toolchain}/bin/$tool
+            done
+            test -x ${toolchain}/bin/rust-analyzer-proc-macro-srv \
+              || test -x ${toolchain}/libexec/rust-analyzer-proc-macro-srv
             test -f ${toolchain}/manifest.toml
             test -f ${toolchain}/lib/rustlib/src/rust/library/Cargo.lock
             for target in ${lib.escapeShellArgs allCheckedTargets}; do

@@ -14,6 +14,16 @@ let
   targetManifest = lib.concatMapStringsSep "\n" (target: ''"${target}",'') targetTriples;
   allTargets = [ hostTriple ] ++ targetTriples;
   stdTargets = [ hostTriple ] ++ (lib.subtractLists noStdTargetTriples targetTriples);
+  expectedBinTools = [
+    "rustc"
+    "cargo"
+    "rustdoc"
+    "rustfmt"
+    "cargo-fmt"
+    "clippy-driver"
+    "cargo-clippy"
+    "rust-analyzer"
+  ];
   copyTargetStd = lib.concatMapStringsSep "\n" (
     { target, package }:
     ''
@@ -64,6 +74,11 @@ runCommand "scarlet-rust-toolchain-${version}"
 
     test -x "$out/bin/rustc"
     test -x "$out/bin/cargo"
+    for tool in ${lib.escapeShellArgs expectedBinTools}; do
+      test -x "$out/bin/$tool"
+    done
+    test -x "$out/bin/rust-analyzer-proc-macro-srv" \
+      || test -x "$out/libexec/rust-analyzer-proc-macro-srv"
     test -f "$out/manifest.toml"
     test -f "$out/lib/rustlib/src/rust/library/Cargo.lock"
     test -x "$out/lib/rustlib/${hostTriple}/bin/rust-lld"

@@ -18,6 +18,26 @@ let
   allTargets = [ hostTriple ] ++ targetTriples;
   targetList = lib.concatStringsSep "," allTargets;
   targetManifest = lib.concatMapStringsSep "\n" (target: ''"${target}",'') targetTriples;
+  toolchainTools = [
+    "rustc"
+    "cargo"
+    "rustdoc"
+    "rustfmt"
+    "clippy"
+    "rust-analyzer"
+    "rust-analyzer-proc-macro-srv"
+  ];
+  toolchainToolList = lib.concatStringsSep "," toolchainTools;
+  expectedBinTools = [
+    "rustc"
+    "cargo"
+    "rustdoc"
+    "rustfmt"
+    "cargo-fmt"
+    "clippy-driver"
+    "cargo-clippy"
+    "rust-analyzer"
+  ];
   targetConfigureFlags = lib.concatMap (target: [
     "--set=target.${target}.optimized-compiler-builtins=false"
   ]) noOptimizedCompilerBuiltinsTargetTriples;
@@ -82,7 +102,7 @@ baseRustc.overrideAttrs (old: {
       "--set=rust.deny-warnings=false"
       "--set=rust.download-rustc=false"
       "--target=${targetList}"
-      "--tools=rustc,cargo,rustdoc,rust-analyzer-proc-macro-srv"
+      "--tools=${toolchainToolList}"
     ]
     ++ targetConfigureFlags;
 
@@ -131,6 +151,11 @@ baseRustc.overrideAttrs (old: {
 
     test -x "$out/bin/rustc"
     test -x "$out/bin/cargo"
+    for tool in ${lib.escapeShellArgs expectedBinTools}; do
+      test -x "$out/bin/$tool"
+    done
+    test -x "$out/bin/rust-analyzer-proc-macro-srv" \
+      || test -x "$out/libexec/rust-analyzer-proc-macro-srv"
     test -f "$out/manifest.toml"
     test -f "$out/lib/rustlib/src/rust/library/Cargo.lock"
     test -x "$out/lib/rustlib/${hostTriple}/bin/rust-lld"
