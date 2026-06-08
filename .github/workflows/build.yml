@@ -50,3 +50,9 @@ jobs:
       - name: Check toolchain
         run: nix flake check . --system ${{ matrix.system }} -L --accept-flake-config
 
+      - name: Pin latest toolchain
+        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
+        run: |
+          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}" \
+            "$(nix eval --raw .#packages.${{ matrix.system }}.scarlet-rust-toolchain.outPath --accept-flake-config)"
+
