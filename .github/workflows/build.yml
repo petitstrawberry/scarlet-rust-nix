@@ -93,5 +93,5 @@ jobs:
 
           TC_PATH="$(nix path-info .#packages.${{ matrix.system }}.scarlet-rust-toolchain --accept-flake-config | head -1)"
 
-          echo "Pinning toolchain: ${TC_PATH}"
-          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}-toolchain" "$TC_PATH"
+          echo "Pinning: ${TC_PATH}"
+          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}" "$TC_PATH"
