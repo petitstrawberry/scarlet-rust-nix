@@ -39,6 +39,7 @@ jobs:
         with:
           name: ${{ env.CACHIX_CACHE_NAME }}
           authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
+          useDaemon: false
           pushFilter: "(scarlet-rust-src-vendored|scarlet-rustc)-"
 
       - name: Build Scarlet LLVM
