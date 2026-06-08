@@ -29,12 +29,12 @@ jobs:
       - name: Resolve current store paths
         id: current
         run: |
-          LLVM_X86="$(nix path-info .#packages.x86_64-linux.scarlet-llvm --accept-flake-config)"
-          LLVM_ARM64="$(nix path-info .#packages.aarch64-linux.scarlet-llvm --accept-flake-config)"
-          LLVM_DARWIN="$(nix path-info .#packages.aarch64-darwin.scarlet-llvm --accept-flake-config)"
-          TC_X86="$(nix path-info .#packages.x86_64-linux.scarlet-rust-toolchain --accept-flake-config)"
-          TC_ARM64="$(nix path-info .#packages.aarch64-linux.scarlet-rust-toolchain --accept-flake-config)"
-          TC_DARWIN="$(nix path-info .#packages.aarch64-darwin.scarlet-rust-toolchain --accept-flake-config)"
+          LLVM_X86="$(nix eval --raw .#packages.x86_64-linux.scarlet-llvm.outPath --accept-flake-config)"
+          LLVM_ARM64="$(nix eval --raw .#packages.aarch64-linux.scarlet-llvm.outPath --accept-flake-config)"
+          LLVM_DARWIN="$(nix eval --raw .#packages.aarch64-darwin.scarlet-llvm.outPath --accept-flake-config)"
+          TC_X86="$(nix eval --raw .#packages.x86_64-linux.scarlet-rust-toolchain.outPath --accept-flake-config)"
+          TC_ARM64="$(nix eval --raw .#packages.aarch64-linux.scarlet-rust-toolchain.outPath --accept-flake-config)"
+          TC_DARWIN="$(nix eval --raw .#packages.aarch64-darwin.scarlet-rust-toolchain.outPath --accept-flake-config)"
           {
             echo "llvm_x86=$LLVM_X86"
             echo "llvm_arm64=$LLVM_ARM64"
