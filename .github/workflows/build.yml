@@ -89,13 +89,9 @@ jobs:
       - name: Pin latest selected paths
         if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
         run: |
-          nix build .#packages.${{ matrix.system }}.scarlet-llvm -L --accept-flake-config
           nix build .#packages.${{ matrix.system }}.scarlet-rust-toolchain -L --accept-flake-config
 
-          LLVM_PATH="$(nix path-info .#packages.${{ matrix.system }}.scarlet-llvm --accept-flake-config | head -1)"
           TC_PATH="$(nix path-info .#packages.${{ matrix.system }}.scarlet-rust-toolchain --accept-flake-config | head -1)"
 
-          echo "Pinning LLVM: ${LLVM_PATH}"
-          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}-llvm" "$LLVM_PATH"
           echo "Pinning toolchain: ${TC_PATH}"
           cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}-toolchain" "$TC_PATH"
