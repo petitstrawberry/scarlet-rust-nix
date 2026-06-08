@@ -39,8 +39,7 @@ jobs:
         with:
           name: ${{ env.CACHIX_CACHE_NAME }}
           authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
-          useDaemon: false
-          pushFilter: "(scarlet-rust-src-vendored|scarlet-rustc)-"
+          skipPush: true
 
       - name: Build Scarlet LLVM
         run: nix build .#packages.${{ matrix.system }}.scarlet-llvm -L --accept-flake-config
@@ -51,38 +50,17 @@ jobs:
       - name: Check toolchain
         run: nix flake check . --system ${{ matrix.system }} -L --accept-flake-config
 
-  pin:
-    name: Pin latest
-    needs: build
-    runs-on: ubuntu-latest
-    env:
-      CACHIX_CACHE_NAME: ${{ vars.CACHIX_CACHE_NAME }}
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-
-      - uses: cachix/cachix-action@v17
-        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
-        with:
-          name: ${{ env.CACHIX_CACHE_NAME }}
-          authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
-          pushFilter: ".*"
-
-      - name: Pin latest LLVM and toolchain
+      - name: Push and pin
         if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
         run: |
-          for system in x86_64-linux aarch64-linux aarch64-darwin; do
-            LLVM="$(nix eval --raw .#packages.${system}.scarlet-llvm.outPath --accept-flake-config)"
-            TC="$(nix eval --raw .#packages.${system}.scarlet-rust-toolchain.outPath --accept-flake-config)"
-            echo "Pinning ${system}..."
-            echo "  LLVM:      ${LLVM}"
-            echo "  Toolchain: ${TC}"
-            cachix pin "$CACHIX_CACHE_NAME" "latest-${system}-llvm" "$LLVM"
-            cachix pin "$CACHIX_CACHE_NAME" "latest-${system}-toolchain" "$TC"
-          done
+          LLVM_PATH="$(nix path-info .#packages.${{ matrix.system }}.scarlet-llvm --accept-flake-config | head -1)"
+          TC_PATH="$(nix path-info .#packages.${{ matrix.system }}.scarlet-rust-toolchain --accept-flake-config | head -1)"
+
+          echo "Pushing LLVM: ${LLVM_PATH}"
+          cachix push "$CACHIX_CACHE_NAME" "$LLVM_PATH"
+          echo "Pushing toolchain: ${TC_PATH}"
+          cachix push "$CACHIX_CACHE_NAME" "$TC_PATH"
+
+          echo "Pinning..."
+          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}-llvm" "$LLVM_PATH"
+          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}-toolchain" "$TC_PATH"
