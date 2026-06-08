@@ -5,9 +5,9 @@ usage() {
     cat >&2 <<'EOF'
 Usage: scripts/update-rust-rev.sh <rust-rev> [system]
 
-Updates flake.nix rustRev and rustHash for the Scarlet Rust fork.
-The script fetches only the Rust source derivation to discover the fixed-output
-hash. It does not build the Rust toolchain.
+Updates flake.nix rustRev/rustHash and the vendored Rust source hash.
+The script fetches only the Rust source and vendored source derivations to
+discover their fixed-output hashes. It does not build the Rust toolchain.
 EOF
 }
 
@@ -41,6 +41,11 @@ set_rust_hash_expr() {
     perl -0pi -e 's/rustHash = (?:lib\.fakeHash|"sha256-[^"]+");/rustHash = '"${expr}"';/' flake.nix
 }
 
+set_vendored_hash_expr() {
+    local expr="$1"
+    perl -0pi -e 's/(outputHashes = \{\n(?:[[:space:]]+[A-Za-z0-9_-]+ = (?:lib\.fakeHash|"sha256-[^"]+");\n)+[[:space:]]+\};)/outputHashes = {\n    x86_64-linux = '"${expr}"';\n    aarch64-linux = '"${expr}"';\n    aarch64-darwin = '"${expr}"';\n  };/s' nix/vendor-rust-src.nix
+}
+
 set_rust_rev
 set_rust_hash_expr "lib.fakeHash"
 
@@ -64,8 +69,32 @@ fi
 set_rust_hash_expr "\"${rust_hash}\""
 
 nix build ".#packages.${system}.scarlet-rust-source" --no-link -L --accept-flake-config
+
+set_vendored_hash_expr "lib.fakeHash"
+
+log_file="$(mktemp)"
+if nix build ".#packages.${system}.scarlet-rust-vendored-src" --no-link -L --accept-flake-config >"${log_file}" 2>&1; then
+    cat "${log_file}"
+    echo "Expected a fixed-output hash mismatch, but the vendored source build succeeded with lib.fakeHash." >&2
+    rm -f "${log_file}"
+    exit 1
+fi
+
+cat "${log_file}"
+vendored_hash="$(sed -n 's/.*got:[[:space:]]*\(sha256-[^[:space:]]*\).*/\1/p' "${log_file}" | tail -n 1)"
+rm -f "${log_file}"
+
+if [ -z "${vendored_hash}" ]; then
+    echo "Could not extract the new vendored Rust source hash from nix output." >&2
+    exit 1
+fi
+
+set_vendored_hash_expr "\"${vendored_hash}\""
+
+nix build ".#packages.${system}.scarlet-rust-vendored-src" --no-link -L --accept-flake-config
 nix flake metadata --accept-flake-config >/dev/null
 
 echo "Updated Rust fork revision:"
-echo "  rustRev  = ${rust_rev}"
-echo "  rustHash = ${rust_hash}"
+echo "  rustRev      = ${rust_rev}"
+echo "  rustHash     = ${rust_hash}"
+echo "  vendoredHash = ${vendored_hash}"
