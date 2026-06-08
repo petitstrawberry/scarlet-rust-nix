@@ -84,11 +84,14 @@ jobs:
 
       - name: Create update PR
         if: steps.rust.outputs.changed == 'true'
+        env:
+          PR_TOKEN: ${{ secrets.SCARLET_RUST_NIX_UPDATE_TOKEN }}
         run: |
           set -euo pipefail
 
           branch="automation/rust-${{ steps.rust.outputs.short_rev }}"
           title="Update Scarlet Rust to ${{ steps.rust.outputs.short_rev }}"
+          body="Updates the packaged Scarlet Rust fork revision to ${{ steps.rust.outputs.rev }}."
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -98,14 +101,20 @@ jobs:
           git commit -m "${title}"
           git push --force-with-lease origin "${branch}"
 
+          if [ -z "${PR_TOKEN}" ]; then
+            echo "::error::SCARLET_RUST_NIX_UPDATE_TOKEN is required to create or update pull requests from GitHub Actions."
+            exit 1
+          fi
+          export GH_TOKEN="${PR_TOKEN}"
+
           if gh pr view "${branch}" --json number >/dev/null 2>&1; then
             gh pr edit "${branch}" \
               --title "${title}" \
-              --body "Updates the packaged Scarlet Rust fork revision to ${{ steps.rust.outputs.rev }}."
+              --body "${body}"
           else
             gh pr create \
               --base main \
               --head "${branch}" \
               --title "${title}" \
-              --body "Updates the packaged Scarlet Rust fork revision to ${{ steps.rust.outputs.rev }}."
+              --body "${body}"
           fi
