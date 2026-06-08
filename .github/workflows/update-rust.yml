@@ -99,7 +99,7 @@ jobs:
           remote_head="$(git ls-remote --heads origin "${branch}" | cut -f1)"
 
           git checkout -B "${branch}"
-          git add flake.nix
+          git add flake.nix nix/vendor-rust-src.nix
           git commit -m "${title}"
 
           if [ -n "${remote_head}" ]; then
