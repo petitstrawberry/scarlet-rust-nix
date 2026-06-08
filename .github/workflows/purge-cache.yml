@@ -29,12 +29,16 @@ jobs:
       - name: Resolve current store paths
         id: current
         run: |
-          LLVM="$(nix path-info .#packages.x86_64-linux.scarlet-llvm --accept-flake-config)"
+          LLVM_X86="$(nix path-info .#packages.x86_64-linux.scarlet-llvm --accept-flake-config)"
+          LLVM_ARM64="$(nix path-info .#packages.aarch64-linux.scarlet-llvm --accept-flake-config)"
+          LLVM_DARWIN="$(nix path-info .#packages.aarch64-darwin.scarlet-llvm --accept-flake-config)"
           TC_X86="$(nix path-info .#packages.x86_64-linux.scarlet-rust-toolchain --accept-flake-config)"
           TC_ARM64="$(nix path-info .#packages.aarch64-linux.scarlet-rust-toolchain --accept-flake-config)"
           TC_DARWIN="$(nix path-info .#packages.aarch64-darwin.scarlet-rust-toolchain --accept-flake-config)"
           {
-            echo "llvm=$LLVM"
+            echo "llvm_x86=$LLVM_X86"
+            echo "llvm_arm64=$LLVM_ARM64"
+            echo "llvm_darwin=$LLVM_DARWIN"
             echo "tc_x86=$TC_X86"
             echo "tc_arm64=$TC_ARM64"
             echo "tc_darwin=$TC_DARWIN"
@@ -43,7 +47,7 @@ jobs:
       - name: Delete stale cache entries
         if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
         run: |
-          KEEP="$LLVM $TC_X86 $TC_ARM64 $TC_DARWIN"
+          KEEP="$LLVM_X86 $LLVM_ARM64 $LLVM_DARWIN $TC_X86 $TC_ARM64 $TC_DARWIN"
           echo "=== Keeping ==="
           for p in $KEEP; do echo "  $p"; done
           echo ""
@@ -57,7 +61,9 @@ jobs:
           echo ""
           echo "=== Done ==="
         env:
-          LLVM: ${{ steps.current.outputs.llvm }}
+          LLVM_X86: ${{ steps.current.outputs.llvm_x86 }}
+          LLVM_ARM64: ${{ steps.current.outputs.llvm_arm64 }}
+          LLVM_DARWIN: ${{ steps.current.outputs.llvm_darwin }}
           TC_X86: ${{ steps.current.outputs.tc_x86 }}
           TC_ARM64: ${{ steps.current.outputs.tc_arm64 }}
           TC_DARWIN: ${{ steps.current.outputs.tc_darwin }}
