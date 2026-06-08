@@ -39,7 +39,7 @@ jobs:
         with:
           name: ${{ env.CACHIX_CACHE_NAME }}
           authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
-          pushFilter: "(-source$|-vendored-src$|\.tar\.gz$)"
+          pushFilter: '(-source$|-vendored-src$|\.tar\.gz$)'
 
       - name: Build Scarlet LLVM
         run: nix build .#packages.${{ matrix.system }}.scarlet-llvm -L --accept-flake-config

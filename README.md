@@ -6,9 +6,8 @@ This repository owns the Nix build and cache contract for the Rust fork used by
 Scarlet. Scarlet itself should consume the cached package from this flake and
 must not build the Rust fork in normal CI.
 
-The Scarlet LLVM fork is packaged separately from the Rust toolchain. Updating
-the Rust fork revision does not force an LLVM rebuild unless the LLVM revision
-also changes.
+This build uses upstream nixpkgs `llvmPackages_21` — no LLVM fork is required.
+The Rust fork handles scarlet target support on its own (see below).
 
 ## Supported hosts
 
@@ -27,8 +26,8 @@ Each host toolchain contains libraries for:
 
 The compiler build follows nixpkgs' Rust packaging split:
 
-- `scarlet-rustc` builds the host compiler plus Scarlet targets with the
-  Scarlet Rust and LLVM forks.
+- `scarlet-rustc` builds the host compiler plus Scarlet targets using the
+  Scarlet Rust fork and upstream nixpkgs LLVM.
 - Existing upstream targets are built as target std-only outputs through the
   nixpkgs cross/fastCross path where applicable, then assembled into the final
   `scarlet-rust-toolchain`.
