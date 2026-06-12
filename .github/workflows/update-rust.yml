@@ -26,8 +26,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  update:
+  resolve:
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.rust.outputs.changed }}
+      current_rev: ${{ steps.rust.outputs.current_rev }}
+      rev: ${{ steps.rust.outputs.rev }}
+      short_rev: ${{ steps.rust.outputs.short_rev }}
+      ref: ${{ steps.rust.outputs.ref }}
     env:
       GH_TOKEN: ${{ github.token }}
       RUST_REPOSITORY: petitstrawberry/rust
@@ -78,20 +84,83 @@ jobs:
         if: steps.rust.outputs.changed == 'false'
         run: echo "scarlet-rust-nix already packages ${{ steps.rust.outputs.rev }}."
 
-      - name: Update flake.nix
-        if: steps.rust.outputs.changed == 'true'
-        run: scripts/update-rust-rev.sh "${{ steps.rust.outputs.rev }}" x86_64-linux
+  compute-hashes:
+    needs: resolve
+    if: needs.resolve.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            system: x86_64-linux
+          - os: ubuntu-24.04-arm
+            system: aarch64-linux
+          - os: macos-14
+            system: aarch64-darwin
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Compute hashes
+        run: |
+          set -euo pipefail
+
+          scripts/update-rust-rev.sh "${{ needs.resolve.outputs.rev }}" "${{ matrix.system }}"
+
+          rust_hash="$(sed -n 's/^[[:space:]]*rustHash = "\(sha256-[^"]*\)";/\1/p' flake.nix)"
+          vendored_hash="$(sed -n 's/^[[:space:]]*${{ matrix.system }} = "\(sha256-[^"]*\)";/\1/p' nix/vendor-rust-src.nix)"
+
+          mkdir -p .rust-update-hashes
+          {
+            echo "system=${{ matrix.system }}"
+            echo "rust_hash=${rust_hash}"
+            echo "vendored_hash=${vendored_hash}"
+          } > ".rust-update-hashes/${{ matrix.system }}.env"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-update-${{ matrix.system }}
+          path: .rust-update-hashes/${{ matrix.system }}.env
+          if-no-files-found: error
+
+  update:
+    needs:
+      - resolve
+      - compute-hashes
+    if: needs.resolve.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rust-update-*
+          path: .rust-update-hashes
+          merge-multiple: true
+
+      - name: Apply update
+        run: scripts/apply-rust-update-hashes.sh "${{ needs.resolve.outputs.rev }}" .rust-update-hashes
 
       - name: Create update PR
-        if: steps.rust.outputs.changed == 'true'
         env:
           PR_TOKEN: ${{ secrets.SCARLET_RUST_NIX_UPDATE_TOKEN }}
         run: |
           set -euo pipefail
 
-          branch="automation/rust-${{ steps.rust.outputs.short_rev }}"
-          title="Update Scarlet Rust to ${{ steps.rust.outputs.short_rev }}"
-          body="Updates the packaged Scarlet Rust fork revision to ${{ steps.rust.outputs.rev }}."
+          branch="automation/rust-${{ needs.resolve.outputs.short_rev }}"
+          title="Update Scarlet Rust to ${{ needs.resolve.outputs.short_rev }}"
+          body="Updates the packaged Scarlet Rust fork revision to ${{ needs.resolve.outputs.rev }}."
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -99,7 +168,7 @@ jobs:
           remote_head="$(git ls-remote --heads origin "${branch}" | cut -f1)"
 
           git checkout -B "${branch}"
-          git add flake.nix nix/vendor-rust-src.nix
+          git add flake.nix nix/vendor-rust-src.nix scripts/update-rust-rev.sh scripts/apply-rust-update-hashes.sh .github/workflows/update-rust.yml
           git commit -m "${title}"
 
           if [ -n "${remote_head}" ]; then

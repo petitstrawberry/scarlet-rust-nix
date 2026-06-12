@@ -5,9 +5,10 @@ usage() {
     cat >&2 <<'EOF'
 Usage: scripts/update-rust-rev.sh <rust-rev> [system]
 
-Updates flake.nix rustRev/rustHash and the vendored Rust source hash.
-The script fetches only the Rust source and vendored source derivations to
-discover their fixed-output hashes. It does not build the Rust toolchain.
+Updates flake.nix rustRev/rustHash and the vendored Rust source hash for the
+given system. The script fetches only the Rust source and vendored source
+derivations to discover their fixed-output hashes. It does not build the Rust
+toolchain.
 EOF
 }
 
@@ -44,10 +45,16 @@ set_rust_hash_expr() {
 }
 
 set_vendored_hash_expr() {
-    local expr="$1"
-    VENDORED_HASH_EXPR="${expr}" perl -0pi -e \
-        's/(outputHashes = \{\n(?:[[:space:]]+[A-Za-z0-9_-]+ = (?:lib\.fakeHash|"sha256-[^"]+");\n)+[[:space:]]+\};)/"outputHashes = {\n    x86_64-linux = $ENV{VENDORED_HASH_EXPR};\n    aarch64-linux = $ENV{VENDORED_HASH_EXPR};\n    aarch64-darwin = $ENV{VENDORED_HASH_EXPR};\n  };"/se' \
+    local system="$1"
+    local expr="$2"
+    VENDORED_SYSTEM="${system}" VENDORED_HASH_EXPR="${expr}" perl -0pi -e \
+        's/^([[:space:]]*\Q$ENV{VENDORED_SYSTEM}\E = )(?:lib\.fakeHash|"sha256-[^"]+");/$1 . $ENV{VENDORED_HASH_EXPR} . ";"/gem' \
         nix/vendor-rust-src.nix
+}
+
+get_vendored_hash_expr() {
+    local system="$1"
+    sed -n 's/^[[:space:]]*'"${system}"' = "\(sha256-[^"]*\)";/\1/p' nix/vendor-rust-src.nix
 }
 
 set_rust_rev
@@ -74,7 +81,12 @@ set_rust_hash_expr "\"${rust_hash}\""
 
 nix build ".#packages.${system}.scarlet-rust-source" --no-link -L --accept-flake-config
 
-set_vendored_hash_expr "lib.fakeHash"
+if [ -z "$(get_vendored_hash_expr "${system}")" ]; then
+    echo "Unsupported system in nix/vendor-rust-src.nix: ${system}" >&2
+    exit 1
+fi
+
+set_vendored_hash_expr "${system}" "lib.fakeHash"
 
 log_file="$(mktemp)"
 if nix build ".#packages.${system}.scarlet-rust-vendored-src" --no-link -L --accept-flake-config >"${log_file}" 2>&1; then
@@ -93,7 +105,7 @@ if [ -z "${vendored_hash}" ]; then
     exit 1
 fi
 
-set_vendored_hash_expr "\"${vendored_hash}\""
+set_vendored_hash_expr "${system}" "\"${vendored_hash}\""
 
 nix build ".#packages.${system}.scarlet-rust-vendored-src" --no-link -L --accept-flake-config
 nix flake metadata --accept-flake-config >/dev/null
@@ -101,4 +113,5 @@ nix flake metadata --accept-flake-config >/dev/null
 echo "Updated Rust fork revision:"
 echo "  rustRev      = ${rust_rev}"
 echo "  rustHash     = ${rust_hash}"
+echo "  system       = ${system}"
 echo "  vendoredHash = ${vendored_hash}"

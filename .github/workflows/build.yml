@@ -39,6 +39,7 @@ jobs:
         with:
           name: ${{ env.CACHIX_CACHE_NAME }}
           authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
+          skipPush: ${{ github.event_name == 'pull_request' }}
           pushFilter: '(-source$|-vendored-src$|\.tar\.gz$)'
 
       - name: Build Scarlet LLVM
