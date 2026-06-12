@@ -12,7 +12,7 @@ let
   outputHashes = {
     x86_64-linux = "sha256-P4e3x6z1CXoG8pjQev4BuH44YX3xyScN1mx95/iyewU=";
     aarch64-linux = "sha256-P4e3x6z1CXoG8pjQev4BuH44YX3xyScN1mx95/iyewU=";
-    aarch64-darwin = "sha256-P4e3x6z1CXoG8pjQev4BuH44YX3xyScN1mx95/iyewU=";
+    aarch64-darwin = "sha256-+njHGdiDX5SURhOvUzBKhRAaPUgd45F+OWQQOkf8eNw=";
   };
 in
 stdenvNoCC.mkDerivation {
