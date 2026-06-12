@@ -38,12 +38,16 @@ set_rust_rev() {
 
 set_rust_hash_expr() {
     local expr="$1"
-    perl -0pi -e 's/rustHash = (?:lib\.fakeHash|"sha256-[^"]+");/rustHash = '"${expr}"';/' flake.nix
+    RUST_HASH_EXPR="${expr}" perl -0pi -e \
+        's/rustHash = (?:lib\.fakeHash|"sha256-[^"]+");/"rustHash = $ENV{RUST_HASH_EXPR};"/e' \
+        flake.nix
 }
 
 set_vendored_hash_expr() {
     local expr="$1"
-    perl -0pi -e 's/(outputHashes = \{\n(?:[[:space:]]+[A-Za-z0-9_-]+ = (?:lib\.fakeHash|"sha256-[^"]+");\n)+[[:space:]]+\};)/outputHashes = {\n    x86_64-linux = '"${expr}"';\n    aarch64-linux = '"${expr}"';\n    aarch64-darwin = '"${expr}"';\n  };/s' nix/vendor-rust-src.nix
+    VENDORED_HASH_EXPR="${expr}" perl -0pi -e \
+        's/(outputHashes = \{\n(?:[[:space:]]+[A-Za-z0-9_-]+ = (?:lib\.fakeHash|"sha256-[^"]+");\n)+[[:space:]]+\};)/"outputHashes = {\n    x86_64-linux = $ENV{VENDORED_HASH_EXPR};\n    aarch64-linux = $ENV{VENDORED_HASH_EXPR};\n    aarch64-darwin = $ENV{VENDORED_HASH_EXPR};\n  };"/se' \
+        nix/vendor-rust-src.nix
 }
 
 set_rust_rev
