@@ -58,8 +58,8 @@
       ];
       noOptimizedCompilerBuiltinsTargetTriples = scarletTargetTriples ++ nixpkgsCompilerTargetTriples;
 
-      rustRev = "d0d9013b9ddb04fe6efd3a9bed64a568b7f768b7";
-      rustHash = "sha256-fZQWtraxticQSDCQN08LY+Frs2mScH64J2CQ92wFOz4=";
+      rustRev = "efe3a61e61756f6bec22d159e5ae5ec5d157f78a";
+      rustHash = "sha256-jb6AASW7XQ/VQeFZnzMsS7n4mMjpX9VvHiqmRDn8h9c=";
 
       forAllSystems = f: lib.genAttrs systems (system: f system);
     in
