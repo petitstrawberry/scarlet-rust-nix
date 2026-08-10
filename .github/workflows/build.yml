@@ -116,7 +116,10 @@ jobs:
         run: |
           nix build .#packages.${{ matrix.system }}.scarlet-rust-toolchain -L --accept-flake-config
 
-          TC_PATH="$(nix path-info .#packages.${{ matrix.system }}.scarlet-rust-toolchain --accept-flake-config | head -1)"
+          # The package has multiple outputs (out, man, doc); pin the toolchain's
+          # main output explicitly instead of relying on path-info ordering.
+          TC_PATH="$(nix eval --raw .#packages.${{ matrix.system }}.scarlet-rust-toolchain.outPath --accept-flake-config)"
 
           echo "Pinning: ${TC_PATH}"
-          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}" "$TC_PATH"
+          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}" "$TC_PATH" \
+            --keep-revisions 1
