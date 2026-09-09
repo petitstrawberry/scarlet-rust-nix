@@ -84,6 +84,22 @@ class PinTests(unittest.TestCase):
         self.assertEqual(data["keep"], {"tag": "Revisions", "contents": 1})
         self.assertEqual(data["artifacts"], [])
 
+    def test_changed_consumer_stops_a_stale_plan_before_replacing_pins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "plan.json"
+            plan.write_text(json.dumps([{
+                "name": "scarlet-distro-aarch64-darwin", "system": "aarch64-darwin",
+                "revision": "a" * 40,
+                "path": f"/nix/store/{'a' * 32}-scarlet-rust-toolchain-{'a' * 12}",
+            }]))
+            with patch.dict(os.environ, {"CACHIX_CACHE_NAME": "test", "CACHIX_AUTH_TOKEN": "test"}), \
+                    patch("sys.argv", ["pin-toolchains.py", "--apply", str(plan)]), \
+                    patch.object(pins, "consumers", return_value={"scarlet-distro": "b" * 40}), \
+                    patch.object(pins, "pin") as pin:
+                with self.assertRaisesRegex(RuntimeError, "consumers changed"):
+                    pins.main()
+                pin.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

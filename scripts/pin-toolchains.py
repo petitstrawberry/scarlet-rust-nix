@@ -113,6 +113,12 @@ def main():
         with open(args.apply) as file:
             plan = json.load(file)
         validate_plan(plan)
+        current = consumers()
+        for entry in plan:
+            if not entry["name"].startswith("latest-"):
+                name = entry["name"].removesuffix(f"-{entry['system']}")
+                if current.get(name) != entry["revision"]:
+                    raise RuntimeError("Scarlet consumers changed during restoration; rerun to refresh the pin plan")
         for entry in plan:
             if entry["name"].startswith("latest-"):
                 if api(f"repos/{REPOSITORY}/commits/main")["sha"] != entry["revision"]:

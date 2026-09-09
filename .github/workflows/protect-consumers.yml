@@ -17,13 +17,13 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: scarlet-toolchain-pins
-  cancel-in-progress: false
-
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    concurrency:
+      group: scarlet-toolchain-pins
+      cancel-in-progress: false
+      queue: max
     outputs:
       has_missing: ${{ steps.plan.outputs.has_missing }}
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -105,6 +105,10 @@ jobs:
     needs: [prepare, restore]
     if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.restore.result == 'success' || needs.restore.result == 'skipped') }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: scarlet-toolchain-pins
+      cancel-in-progress: false
+      queue: max
     env:
       GH_TOKEN: ${{ github.token }}
       CACHIX_CACHE_NAME: ${{ vars.CACHIX_CACHE_NAME }}
