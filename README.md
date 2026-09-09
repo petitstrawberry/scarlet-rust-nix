@@ -68,9 +68,24 @@ The `Update Scarlet Rust Revision` workflow can be started three ways:
 - manual `workflow_dispatch`
 - `repository_dispatch` with event type `rust-updated`
 
-The updater does not build the full toolchain directly. It updates `rustRev`
-and `rustHash` in `flake.nix`, opens a PR, and lets the normal build workflow
-validate the toolchain on all supported hosts.
+The updater computes source and vendor hashes on all three hosts and maintains
+one PR from `automation/rust-update`. Both the branch push and the PR operation
+use `SCARLET_RUST_NIX_UPDATE_TOKEN`, so automatic PR CI does not wait for a human
+to approve a `GITHUB_TOKEN`-triggered workflow. A retry with identical contents
+does not replace the commit. New updates replace the pending candidate and cancel
+the previous PR build.
+
+After all three host builds, checks and Cachix uploads succeed, the build workflow
+merges the update with `SCARLET_RUST_NIX_UPDATE_TOKEN`. The merger accepts only
+revision/hash changes in `flake.nix` and `nix/vendor-rust-src.nix`, checks the
+current Rust integration branch, and uses the exact PR head SHA that passed CI.
+If the base moved during the build, it updates the PR branch for fresh CI.
+Other PRs remain manual. Configure `main` with the required status check
+`Toolchain CI`, strict/up-to-date checks enabled, and no required review approval.
+
+The update token needs Contents and Pull requests write access to this repository.
+Using a PAT for the merge also triggers the normal `main` workflow, which reuses
+the PR's cached derivations and updates the latest pins.
 
 From the Rust fork, trigger this repository after updating the `scarlet-target`
 branch:
@@ -99,6 +114,40 @@ jobs:
 
 `SCARLET_RUST_NIX_DISPATCH_TOKEN` needs permission to create repository
 dispatch events in `petitstrawberry/scarlet-rust-nix`.
+The Rust fork installs this sender as `.github/workflows/notify-scarlet-rust-nix.yml`.
+Dispatch payloads are notifications; the receiver resolves the integration
+branch again to prevent delayed events from selecting an older commit. The daily
+scheduled check remains a fallback if a notification is missed.
+
+## Cache retention
+
+Same-repository PRs upload checked toolchain outputs and their runtime closures
+to Cachix without pinning them. Fork PRs only read the public cache. Builds upload
+explicit output paths after checks, rather than pushing every build dependency
+through a post-build hook. In particular, new source/vendor derivations are not
+uploaded unless they are actually part of a toolchain output's closure.
+
+Before uploading any candidate, `Protect Scarlet toolchains` reads Scarlet's
+committed `flake.lock` on `dev`, `main`, and the newest published `distro-*`
+release. It pins the corresponding toolchain output for each supported host:
+
+- `scarlet-dev-<system>` protects development consumers.
+- `scarlet-main-<system>` protects the stable branch.
+- `scarlet-distro-<system>` protects the latest published distro.
+- `latest-<system>` identifies the newest successful toolchain build on `main`.
+
+Each name keeps one revision. Multiple names that reference the same store path
+share its storage. Consumer pins are refreshed every six hours and before the
+latest pins move; an older CI run cannot move latest backwards. Available consumer
+paths are protected first. A missing consumer is rebuilt on its native host,
+uploaded and pinned before candidate uploads are allowed. Failure to resolve,
+restore or pin a consumer blocks new uploads instead of silently discarding its
+protection.
+
+Unpinned PR outputs still consume storage and may be garbage-collected under
+capacity pressure. Pins protect consumers, but cannot make an undersized cache
+large enough: it must hold the protected closures plus space for a candidate.
+This policy protects the latest distro release, not every historical release.
 
 For local updates:
 

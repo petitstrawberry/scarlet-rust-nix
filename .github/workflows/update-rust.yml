@@ -18,8 +18,7 @@ on:
     - cron: "0 18 * * *"
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: update-scarlet-rust-revision
@@ -50,11 +49,16 @@ jobs:
 
       - name: Resolve Rust revision
         id: rust
+        env:
+          REQUESTED_RUST_REV: ${{ inputs.rust_rev }}
+          REQUESTED_RUST_REF: ${{ inputs.rust_ref }}
         run: |
           set -euo pipefail
 
-          rust_rev="${{ github.event.client_payload.rev || inputs.rust_rev || '' }}"
-          rust_ref="${{ github.event.client_payload.ref || inputs.rust_ref || '' }}"
+          # Dispatch events are hints: resolve the current branch tip so delayed
+          # notifications cannot roll the package back to an older revision.
+          rust_rev="${REQUESTED_RUST_REV}"
+          rust_ref="${REQUESTED_RUST_REF}"
           rust_ref="${rust_ref:-${DEFAULT_RUST_REF}}"
 
           if [ -z "${rust_rev}" ]; then
@@ -69,10 +73,12 @@ jobs:
           current_rev="$(sed -n 's/^[[:space:]]*rustRev = "\([0-9a-f]\{40\}\)";/\1/p' flake.nix)"
           short_rev="$(printf '%s' "${rust_rev}" | cut -c1-12)"
 
-          echo "rev=${rust_rev}" >> "${GITHUB_OUTPUT}"
-          echo "short_rev=${short_rev}" >> "${GITHUB_OUTPUT}"
-          echo "current_rev=${current_rev}" >> "${GITHUB_OUTPUT}"
-          echo "ref=${rust_ref}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "rev=${rust_rev}"
+            echo "short_rev=${short_rev}"
+            echo "current_rev=${current_rev}"
+            echo "ref=${rust_ref}"
+          } >> "${GITHUB_OUTPUT}"
 
           if [ "${current_rev}" = "${rust_rev}" ]; then
             echo "changed=false" >> "${GITHUB_OUTPUT}"
@@ -142,6 +148,7 @@ jobs:
           name: rust-update-${{ matrix.system }}
           path: .rust-update-hashes/${{ matrix.system }}.env
           if-no-files-found: error
+          overwrite: true
 
   update:
     needs:
@@ -150,10 +157,19 @@ jobs:
     if: needs.resolve.outputs.changed == 'true'
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.SCARLET_RUST_NIX_UPDATE_TOKEN }}
 
     steps:
+      - name: Check automation credentials
+        run: |
+          test -n "${GH_TOKEN}" || {
+            echo "::error::SCARLET_RUST_NIX_UPDATE_TOKEN is required for automatic PR CI."
+            exit 1
+          }
+
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SCARLET_RUST_NIX_UPDATE_TOKEN }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -165,12 +181,10 @@ jobs:
         run: scripts/apply-rust-update-hashes.sh "${{ needs.resolve.outputs.rev }}" .rust-update-hashes
 
       - name: Create update PR
-        env:
-          PR_TOKEN: ${{ secrets.SCARLET_RUST_NIX_UPDATE_TOKEN }}
         run: |
           set -euo pipefail
 
-          branch="automation/rust-${{ needs.resolve.outputs.short_rev }}"
+          branch="automation/rust-update"
           title="Update Scarlet Rust to ${{ needs.resolve.outputs.short_rev }}"
           body="Updates the packaged Scarlet Rust fork revision to ${{ needs.resolve.outputs.rev }}."
 
@@ -178,24 +192,27 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           remote_head="$(git ls-remote --heads origin "${branch}" | cut -f1)"
+          if [ -n "${remote_head}" ]; then
+            git fetch origin "${branch}"
+            remote_head="$(git rev-parse FETCH_HEAD)"
+          fi
 
           git checkout -B "${branch}"
-          git add flake.nix nix/vendor-rust-src.nix scripts/update-rust-rev.sh scripts/apply-rust-update-hashes.sh .github/workflows/update-rust.yml
-          git commit -m "${title}"
+          git add flake.nix nix/vendor-rust-src.nix
 
-          if [ -n "${remote_head}" ]; then
-            git push --force-with-lease="refs/heads/${branch}:${remote_head}" origin "${branch}"
+          # A scheduled retry must not replace an identical commit and restart CI.
+          if [ -n "${remote_head}" ] && [ "$(git write-tree)" = "$(git rev-parse "${remote_head}^{tree}")" ]; then
+            echo "The update branch already has the expected contents."
           else
-            git push origin "${branch}"
+            git commit -m "${title}"
+            if [ -n "${remote_head}" ]; then
+              git push --force-with-lease="refs/heads/${branch}:${remote_head}" origin "${branch}"
+            else
+              git push origin "${branch}"
+            fi
           fi
 
-          if [ -z "${PR_TOKEN}" ]; then
-            echo "::error::SCARLET_RUST_NIX_UPDATE_TOKEN is required to create or update pull requests from GitHub Actions."
-            exit 1
-          fi
-          export GH_TOKEN="${PR_TOKEN}"
-
-          if gh pr view "${branch}" --json number >/dev/null 2>&1; then
+          if [ -n "$(gh pr list --state open --head "${branch}" --json number --jq '.[0].number // empty')" ]; then
             gh pr edit "${branch}" \
               --title "${title}" \
               --body "${body}"

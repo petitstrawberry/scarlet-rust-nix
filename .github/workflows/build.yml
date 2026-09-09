@@ -7,8 +7,22 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: scarlet-toolchain-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  protect-consumers:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/protect-consumers.yml
+    secrets: inherit
+
   build:
+    needs: protect-consumers
+    if: ${{ !cancelled() && (needs.protect-consumers.result == 'success' || needs.protect-consumers.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -27,6 +41,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check automation scripts
+        run: |
+          node --test scripts/merge-rust-update.test.cjs
+          python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Free Disk Space (Ubuntu)
         if: runner.os == 'Linux'
@@ -51,11 +72,8 @@ jobs:
         with:
           name: ${{ env.CACHIX_CACHE_NAME }}
           authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
-          skipPush: ${{ github.event_name == 'pull_request' }}
-          pushFilter: '(-source$|-vendored-src$|\.tar\.gz$)'
-
-      - name: Build Scarlet LLVM
-        run: nix build .#packages.${{ matrix.system }}.scarlet-llvm -L --accept-flake-config
+          # Publish only after checks succeed, including on same-repository PRs.
+          skipPush: true
 
       - name: Build toolchain
         run: nix build .#packages.${{ matrix.system }}.scarlet-rust-toolchain -L --accept-flake-config
@@ -63,63 +81,48 @@ jobs:
       - name: Check toolchain
         run: nix flake check . --system ${{ matrix.system }} -L --accept-flake-config
 
-  pin:
-    name: Pin latest (${{ matrix.system }})
-    needs: build
-    if: github.event_name != 'pull_request'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            system: x86_64-linux
-          - os: ubuntu-24.04-arm
-            system: aarch64-linux
-          - os: macos-14
-            system: aarch64-darwin
-
-    runs-on: ${{ matrix.os }}
-    env:
-      CACHIX_CACHE_NAME: ${{ vars.CACHIX_CACHE_NAME }}
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Free Disk Space (Ubuntu)
-        if: runner.os == 'Linux'
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-
-      - uses: cachix/cachix-action@v17
-        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
-        with:
-          name: ${{ env.CACHIX_CACHE_NAME }}
-          authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
-          skipPush: true
-
-      - name: Pin latest selected paths
-        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != ''
+      - name: Upload checked toolchain to Cachix
+        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         run: |
-          nix build .#packages.${{ matrix.system }}.scarlet-rust-toolchain -L --accept-flake-config
+          # Push the complete runtime closure, including already-substituted paths.
+          # No pin is created for PRs. The merge job waits for every upload.
+          nix build --no-link --print-out-paths '.#packages.${{ matrix.system }}.scarlet-rust-toolchain^*' \
+            --accept-flake-config | cachix push "${CACHIX_CACHE_NAME}"
 
-          # The package has multiple outputs (out, man, doc); pin the toolchain's
-          # main output explicitly instead of relying on path-info ordering.
-          TC_PATH="$(nix eval --raw .#packages.${{ matrix.system }}.scarlet-rust-toolchain.outPath --accept-flake-config)"
+  ci:
+    name: Toolchain CI
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every build and cache upload
+        env:
+          RESULT: ${{ needs.build.result }}
+        run: test "${RESULT}" = success
 
-          echo "Pinning: ${TC_PATH}"
-          cachix pin "$CACHIX_CACHE_NAME" "latest-${{ matrix.system }}" "$TC_PATH" \
-            --keep-revisions 1
+  merge-update:
+    name: Merge checked Rust update
+    needs: [build, ci]
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'automation/rust-update'
+    runs-on: ubuntu-latest
+    steps:
+      # Execute the merger from the trusted base, never from the updated Rust source.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.SCARLET_RUST_NIX_UPDATE_TOKEN }}
+          script: |
+            const merge = require('./scripts/merge-rust-update.cjs');
+            await merge({ github, context, core });
+
+  pin:
+    name: Pin latest and Scarlet consumers
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/protect-consumers.yml
+    with:
+      latest_rev: ${{ github.sha }}
+    secrets: inherit
