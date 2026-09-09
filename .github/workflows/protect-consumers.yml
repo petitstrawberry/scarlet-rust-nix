@@ -1,0 +1,125 @@
+name: Protect Scarlet toolchains
+
+on:
+  workflow_call:
+    inputs:
+      latest_rev:
+        type: string
+        required: false
+        default: ""
+    secrets:
+      CACHIX_AUTH_TOKEN:
+        required: true
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: scarlet-toolchain-pins
+      cancel-in-progress: false
+      queue: max
+    outputs:
+      has_missing: ${{ steps.plan.outputs.has_missing }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CACHIX_CACHE_NAME: ${{ vars.CACHIX_CACHE_NAME }}
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      LATEST_REV: ${{ inputs.latest_rev }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Protect toolchains referenced by Scarlet
+        id: plan
+        run: python3 scripts/pin-toolchains.py --prepare pin-plan.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pin-plan-${{ inputs.latest_rev || 'consumers' }}
+          path: pin-plan.json
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: error
+
+  restore:
+    needs: prepare
+    if: needs.prepare.outputs.has_missing == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        if: runner.os == 'Linux'
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - uses: cachix/cachix-action@v17
+        with:
+          name: ${{ vars.CACHIX_CACHE_NAME }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+      - name: Recover from Scarlet's consumer cache when available
+        uses: cachix/cachix-action@v17
+        with:
+          name: scarlet-dev
+          skipPush: true
+      - name: Restore missing consumer toolchain
+        env:
+          FLAKE_REV: ${{ matrix.revision }}
+          NIX_SYSTEM: ${{ matrix.system }}
+          EXPECTED_PATH: ${{ matrix.path }}
+          CACHIX_CACHE_NAME: ${{ vars.CACHIX_CACHE_NAME }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          flake="github:petitstrawberry/scarlet-rust-nix/${FLAKE_REV}#packages.${NIX_SYSTEM}.scarlet-rust-toolchain"
+          # Only the runtime output is retained; missing docs must not force a rebuild.
+          nix build "${flake}^out" --no-link -L --accept-flake-config
+          actual="$(nix eval --raw "${flake}.outPath" --accept-flake-config)"
+          test "${actual}" = "${EXPECTED_PATH}"
+          cachix push "${CACHIX_CACHE_NAME}" "${actual}"
+
+  protect:
+    needs: [prepare, restore]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.restore.result == 'success' || needs.restore.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: scarlet-toolchain-pins
+      cancel-in-progress: false
+      queue: max
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CACHIX_CACHE_NAME: ${{ vars.CACHIX_CACHE_NAME }}
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: pin-plan-${{ inputs.latest_rev || 'consumers' }}
+      - name: Pin all consumers before allowing new uploads
+        run: python3 scripts/pin-toolchains.py --apply pin-plan.json
