@@ -96,7 +96,8 @@ jobs:
         run: |
           set -euo pipefail
           flake="github:petitstrawberry/scarlet-rust-nix/${FLAKE_REV}#packages.${NIX_SYSTEM}.scarlet-rust-toolchain"
-          nix build "${flake}" -L --accept-flake-config
+          # Only the runtime output is retained; missing docs must not force a rebuild.
+          nix build "${flake}^out" --no-link -L --accept-flake-config
           actual="$(nix eval --raw "${flake}.outPath" --accept-flake-config)"
           test "${actual}" = "${EXPECTED_PATH}"
           cachix push "${CACHIX_CACHE_NAME}" "${actual}"
