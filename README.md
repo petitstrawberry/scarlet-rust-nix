@@ -139,8 +139,8 @@ release. It pins the corresponding toolchain output for each supported host:
 Each name keeps one revision. Multiple names that reference the same store path
 share its storage. Consumer pins are refreshed every six hours and before the
 latest pins move; an older CI run cannot move latest backwards. Available consumer
-paths are protected first. A missing consumer is rebuilt on its native host,
-uploaded and pinned before candidate uploads are allowed. Failure to resolve,
+paths are protected first. A missing consumer is restored from Scarlet's cache
+or rebuilt on its native host, then uploaded and pinned before candidate uploads are allowed. Failure to resolve,
 restore or pin a consumer blocks new uploads instead of silently discarding its
 protection.
 
