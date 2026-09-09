@@ -35,7 +35,6 @@ def locked_revision(lock):
 
 
 def consumers():
-    refs = {"scarlet-dev": "dev", "scarlet-main": "main"}
     # Release tags are distinct from the latest GitHub release (which may be a kernel).
     pages = json.loads(run("gh", "api", "--paginate", "--slurp", "repos/petitstrawberry/Scarlet/releases"))
     releases = [
@@ -45,13 +44,10 @@ def consumers():
     ]
     if not releases:
         raise ValueError("No published Scarlet distro release found; retaining existing pins")
-    refs["scarlet-distro"] = max(releases, key=lambda r: r["published_at"])["tag_name"]
-    result = {}
-    for name, ref in refs.items():
-        data = api(f"repos/petitstrawberry/Scarlet/contents/flake.lock?ref={ref}")
-        lock = json.loads(base64.b64decode(data["content"]))
-        result[name] = locked_revision(lock)
-    return result
+    ref = max(releases, key=lambda r: r["published_at"])["tag_name"]
+    data = api(f"repos/petitstrawberry/Scarlet/contents/flake.lock?ref={ref}")
+    lock = json.loads(base64.b64decode(data["content"]))
+    return {"scarlet-distro": locked_revision(lock)}
 
 
 def plan_pins(revisions, evaluate):
@@ -90,7 +86,7 @@ def validate_plan(plan):
     for entry in plan:
         system = entry["system"]
         if system not in SYSTEMS or entry["name"] not in [
-            f"{name}-{system}" for name in ("scarlet-dev", "scarlet-main", "scarlet-distro", "latest")
+            f"{name}-{system}" for name in ("scarlet-distro", "latest")
         ]:
             raise ValueError("Invalid pin name or host")
         if not re.fullmatch(r"[0-9a-f]{40}", entry["revision"]):

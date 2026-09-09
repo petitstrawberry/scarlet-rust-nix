@@ -128,11 +128,9 @@ through a post-build hook. In particular, new source/vendor derivations are not
 uploaded unless they are actually part of a toolchain output's closure.
 
 Before uploading any candidate, `Protect Scarlet toolchains` reads Scarlet's
-committed `flake.lock` on `dev`, `main`, and the newest published `distro-*`
-release. It pins the corresponding toolchain output for each supported host:
+committed `flake.lock` from the newest published `distro-*` release.
+It pins the corresponding toolchain output for each supported host:
 
-- `scarlet-dev-<system>` protects development consumers.
-- `scarlet-main-<system>` protects the stable branch.
 - `scarlet-distro-<system>` protects the latest published distro.
 - `latest-<system>` identifies the newest successful toolchain build on `main`.
 
