@@ -38,9 +38,9 @@ class PinTests(unittest.TestCase):
             calls.append((revision, system))
             return f"/nix/store/{'a' * 32}-scarlet-rust-toolchain-{revision[:12]}"
 
-        result = pins.plan_pins({"scarlet-dev": "a" * 40, "scarlet-distro": "a" * 40, "latest": "b" * 40}, evaluate)
-        self.assertEqual(len(calls), 6)
-        self.assertEqual(len(result), 9)
+        result = pins.plan_pins({"scarlet-distro": "a" * 40, "latest": "a" * 40}, evaluate)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(result), 6)
         self.assertTrue(all(name.startswith("latest-") for name, _ in result[-3:]))
 
     def test_rejects_non_toolchain_outputs_before_pinning(self):
@@ -63,11 +63,11 @@ class PinTests(unittest.TestCase):
             plan, output = Path(directory) / "plan.json", Path(directory) / "output"
             with patch.dict(os.environ, {"CACHIX_CACHE_NAME": "test", "CACHIX_AUTH_TOKEN": "test", "GITHUB_OUTPUT": str(output), "LATEST_REV": ""}), \
                     patch("sys.argv", ["pin-toolchains.py", "--prepare", str(plan)]), \
-                    patch.object(pins, "consumers", return_value={"scarlet-dev": "a" * 40, "scarlet-distro": "b" * 40}), \
+                    patch.object(pins, "consumers", return_value={"scarlet-distro": "b" * 40}), \
                     patch.object(pins, "run", side_effect=fake_run), patch.object(pins, "pin") as pin:
                 pins.main()
-            self.assertEqual(len(json.loads(plan.read_text())), 6)
-            self.assertEqual(pin.call_count, 5)
+            self.assertEqual(len(json.loads(plan.read_text())), 3)
+            self.assertEqual(pin.call_count, 2)
             outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
             self.assertEqual(outputs["has_missing"], "true")
             missing = json.loads(outputs["matrix"])["include"]
