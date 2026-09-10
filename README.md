@@ -17,6 +17,7 @@ The Rust fork handles scarlet target support on its own (see below).
 
 Each host toolchain contains libraries for:
 
+- `riscv32gc-unknown-scarlet`
 - `riscv64gc-unknown-scarlet`
 - `aarch64-unknown-scarlet`
 - `riscv64gc-unknown-none-elf`

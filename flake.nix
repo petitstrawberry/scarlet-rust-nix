@@ -37,6 +37,7 @@
       };
 
       scarletTargetTriples = [
+        "riscv32gc-unknown-scarlet"
         "riscv64gc-unknown-scarlet"
         "aarch64-unknown-scarlet"
       ];
