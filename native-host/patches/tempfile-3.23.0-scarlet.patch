@@ -1,0 +1,71 @@
+--- a/src/file/imp/mod.rs
++++ b/src/file/imp/mod.rs
+@@ -1,7 +1,14 @@
+ #[cfg_attr(any(unix, target_os = "redox", target_os = "wasi"), path = "unix.rs")]
+ #[cfg_attr(windows, path = "windows.rs")]
++#[cfg_attr(target_os = "scarlet", path = "scarlet.rs")]
+ #[cfg_attr(
+-    not(any(unix, target_os = "redox", target_os = "wasi", windows)),
++    not(any(
++        unix,
++        target_os = "redox",
++        target_os = "wasi",
++        target_os = "scarlet",
++        windows
++    )),
+     path = "other.rs"
+ )]
+ mod platform;
+--- /dev/null
++++ b/src/file/imp/scarlet.rs
+@@ -0,0 +1,50 @@
++use std::fs::{self, File, OpenOptions, Permissions};
++use std::io;
++use std::path::Path;
++
++fn unsupported<T>(operation: &str) -> io::Result<T> {
++    Err(io::Error::new(
++        io::ErrorKind::Unsupported,
++        format!("{operation} is not supported on Scarlet"),
++    ))
++}
++
++pub fn create_named(
++    path: &Path,
++    open_options: &mut OpenOptions,
++    permissions: Option<&Permissions>,
++) -> io::Result<File> {
++    // Scarlet's VFS currently supplies the creation permissions and has no
++    // chmod operation. Reject custom permissions before creating anything.
++    if permissions.is_some() {
++        return unsupported("custom temporary file permissions");
++    }
++    open_options.read(true).write(true).create_new(true).open(path)
++}
++
++pub fn create(_dir: &Path) -> io::Result<File> {
++    // Unlink-while-open behavior has not been established for all native
++    // filesystems. Do not silently return a named file from the unnamed API.
++    unsupported("unnamed temporary files")
++}
++
++pub fn reopen(_file: &File, _path: &Path) -> io::Result<File> {
++    // std does not expose Scarlet file identity for comparing a reopened path
++    // with the original handle. A plain open would break reopen's guarantee.
++    unsupported("secure temporary file reopening")
++}
++
++pub fn persist(old_path: &Path, new_path: &Path, overwrite: bool) -> io::Result<()> {
++    if overwrite {
++        fs::rename(old_path, new_path)
++    } else {
++        // Do not emulate atomic no-clobber with an existence check followed by
++        // rename: another task could create the destination between them.
++        unsupported("atomic no-clobber temporary file persistence")
++    }
++}
++
++pub fn keep(_path: &Path) -> io::Result<()> {
++    // Named native files have no automatic kernel delete-on-close flag.
++    Ok(())
++}

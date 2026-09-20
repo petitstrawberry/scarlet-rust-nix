@@ -1,0 +1,1062 @@
+diff --git a/compiler/rustc_codegen_cranelift/Cargo.lock b/compiler/rustc_codegen_cranelift/Cargo.lock
+index 3d13b5540e1..2c4c52a8ff2 100644
+--- a/compiler/rustc_codegen_cranelift/Cargo.lock
++++ b/compiler/rustc_codegen_cranelift/Cargo.lock
+@@ -458,8 +458,6 @@ dependencies = [
+ [[package]]
+ name = "target-lexicon"
+ version = "0.13.3"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "df7f62577c25e07834649fc3b39fafdc597c0a3527dc1c60129201ccfcbaa50c"
+
+ [[package]]
+ name = "unicode-ident"
+diff --git a/compiler/rustc_codegen_cranelift/Cargo.toml b/compiler/rustc_codegen_cranelift/Cargo.toml
+index ee4bde477c4..27aed569f2f 100644
+--- a/compiler/rustc_codegen_cranelift/Cargo.toml
++++ b/compiler/rustc_codegen_cranelift/Cargo.toml
+@@ -11,7 +11,6 @@ crate-type = ["dylib"]
+ cranelift-codegen = { version = "0.127.0", default-features = false, features = ["std", "timing", "unwind", "all-native-arch"] }
+ cranelift-frontend = { version = "0.127.0" }
+ cranelift-module = { version = "0.127.0" }
+-cranelift-native = { version = "0.127.0" }
+ cranelift-jit = { version = "0.127.0", optional = true }
+ cranelift-object = { version = "0.127.0" }
+ target-lexicon = "0.13"
+@@ -22,7 +21,14 @@ indexmap = "2.0.0"
+ libloading = { version = "0.9.0", optional = true }
+ smallvec = "1.8.1"
+
++# Native feature probing currently brings a libc dependency on RISC-V hosts.
++# Scarlet AOT uses the selected target ISA and does not probe host CPU features.
++[target.'cfg(not(target_os = "scarlet"))'.dependencies]
++cranelift-native = { version = "0.127.0" }
++
+ [patch.crates-io]
++target-lexicon = { path = "../../native-host-deps/target-lexicon-0.13.3" }
++
+ # Uncomment to use an unreleased version of cranelift
+ #cranelift-codegen = { git = "https://github.com/bytecodealliance/wasmtime.git", branch = "release-40.0.0" }
+ #cranelift-frontend = { git = "https://github.com/bytecodealliance/wasmtime.git", branch = "release-40.0.0" }
+diff --git a/compiler/rustc_codegen_cranelift/src/global_asm.rs b/compiler/rustc_codegen_cranelift/src/global_asm.rs
+index 8d8cdb14dbc..1798b8c7f02 100644
+--- a/compiler/rustc_codegen_cranelift/src/global_asm.rs
++++ b/compiler/rustc_codegen_cranelift/src/global_asm.rs
+@@ -149,14 +149,28 @@ fn codegen_global_asm_inner<'tcx>(
+ #[derive(Debug)]
+ pub(crate) struct GlobalAsmConfig {
+     assembler: PathBuf,
++    use_external_assembler: bool,
+     target: String,
+     pub(crate) output_filenames: Arc<OutputFilenames>,
+ }
+
+ impl GlobalAsmConfig {
+     pub(crate) fn new(tcx: TyCtxt<'_>) -> Self {
++        let explicit_assembler = std::env::var_os("CG_CLIF_AS").map(PathBuf::from);
++        let use_external_assembler = cfg!(target_os = "scarlet")
++            || option_env!("CG_CLIF_FORCE_GNU_AS").is_some()
++            || explicit_assembler.is_some();
+         GlobalAsmConfig {
+-            assembler: crate::toolchain::get_toolchain_binary(tcx.sess, "as"),
++            // Scarlet's native rustc may have no LLVM backend. Its assembly
++            // route must not recursively invoke rustc with the LLVM backend.
++            assembler: explicit_assembler.unwrap_or_else(|| {
++                if cfg!(target_os = "scarlet") {
++                    PathBuf::from("as")
++                } else {
++                    crate::toolchain::get_toolchain_binary(tcx.sess, "as")
++                }
++            }),
++            use_external_assembler,
+             target: match &tcx.sess.opts.target_triple {
+                 rustc_target::spec::TargetTuple::TargetTuple(triple) => triple.clone(),
+                 rustc_target::spec::TargetTuple::TargetJson { path_for_rustdoc, .. } => {
+@@ -192,13 +206,18 @@ pub(crate) fn compile_global_asm(
+     );
+
+     // Assemble `global_asm`
+-    if option_env!("CG_CLIF_FORCE_GNU_AS").is_some() {
++    if config.use_external_assembler {
+         let mut child = Command::new(&config.assembler)
+             .arg("-o")
+             .arg(&global_asm_object_file)
+             .stdin(Stdio::piped())
+             .spawn()
+-            .expect("Failed to spawn `as`.");
++            .map_err(|error| {
++                format!(
++                    "failed to start assembler {}: {error}; set CG_CLIF_AS to a native GNU-compatible assembler",
++                    config.assembler.display(),
++                )
++            })?;
+         child.stdin.take().unwrap().write_all(global_asm.as_bytes()).unwrap();
+         let status = child.wait().expect("Failed to wait for `as`.");
+         if !status.success() {
+diff --git a/compiler/rustc_codegen_cranelift/src/lib.rs b/compiler/rustc_codegen_cranelift/src/lib.rs
+index 5fdecd014ac..b1c31acbb9f 100644
+--- a/compiler/rustc_codegen_cranelift/src/lib.rs
++++ b/compiler/rustc_codegen_cranelift/src/lib.rs
+@@ -320,7 +320,15 @@ fn build_isa(sess: &Session, jit: bool) -> Arc<dyn TargetIsa + 'static> {
+     let flags = settings::Flags::new(flags_builder);
+
+     let isa_builder = match sess.opts.cg.target_cpu.as_deref() {
+-        Some("native") => cranelift_native::builder_with_options(true).unwrap(),
++        Some("native") => {
++            #[cfg(target_os = "scarlet")]
++            sess.dcx().fatal(
++                "native CPU detection is not supported on Scarlet; omit -Ctarget-cpu=native",
++            );
++            #[cfg(not(target_os = "scarlet"))]
++            cranelift_native::builder_with_options(true)
++                .unwrap_or_else(|error| sess.dcx().fatal(error))
++        }
+         Some(value) => {
+             let mut builder =
+                 cranelift_codegen::isa::lookup(target_triple.clone()).unwrap_or_else(|err| {
+diff --git a/compiler/rustc_codegen_ssa/src/back/link.rs b/compiler/rustc_codegen_ssa/src/back/link.rs
+index e4e954d2261..4538250527e 100644
+--- a/compiler/rustc_codegen_ssa/src/back/link.rs
++++ b/compiler/rustc_codegen_ssa/src/back/link.rs
+@@ -1,4 +1,5 @@
+ mod raw_dylib;
++mod scarlet;
+
+ use std::collections::BTreeSet;
+ use std::ffi::OsString;
+@@ -45,7 +46,7 @@
+ use rustc_span::Symbol;
+ use rustc_target::spec::crt_objects::CrtObjects;
+ use rustc_target::spec::{
+-    Abi, BinaryFormat, Cc, Env, LinkOutputKind, LinkSelfContainedComponents,
++    Abi, Arch, BinaryFormat, Cc, Env, LinkOutputKind, LinkSelfContainedComponents,
+     LinkSelfContainedDefault, LinkerFeatures, LinkerFlavor, LinkerFlavorCli, Lld, Os, RelocModel,
+     RelroLevel, SanitizerSet, SplitDebuginfo,
+ };
+@@ -157,6 +158,17 @@ pub fn link_binary(
+                         path.as_ref(),
+                         codegen_backend,
+                     );
++                    if sess.target.os == Os::Scarlet {
++                        let machine = match sess.target.arch {
++                            Arch::AArch64 => 183,
++                            Arch::RiscV32 | Arch::RiscV64 => 243,
++                            _ => sess.dcx().fatal("unsupported Scarlet ELF architecture"),
++                        };
++                        let class = if sess.target.pointer_width == 64 { 2 } else { 1 };
++                        if let Err(error) = scarlet::mark_output(&out_filename, class, machine) {
++                            sess.dcx().fatal(format!("failed to mark Scarlet ELF output: {error}"));
++                        }
++                    }
+                 }
+             }
+             if sess.opts.json_artifact_notifications {
+diff --git a/compiler/rustc_data_structures/Cargo.toml b/compiler/rustc_data_structures/Cargo.toml
+index c8296e05f6b..23744e9558a 100644
+--- a/compiler/rustc_data_structures/Cargo.toml
++++ b/compiler/rustc_data_structures/Cargo.toml
+@@ -50,7 +50,7 @@ features = [
+ libc = "0.2"
+ # tidy-alphabetical-end
+
+-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
++[target.'cfg(not(any(target_arch = "wasm32", target_os = "scarlet")))'.dependencies]
+ # tidy-alphabetical-start
+ memmap2 = "0.2.1"
+ # tidy-alphabetical-end
+diff --git a/compiler/rustc_data_structures/src/memmap.rs b/compiler/rustc_data_structures/src/memmap.rs
+index d64a5862f4e..2c0ef5e1a39 100644
+--- a/compiler/rustc_data_structures/src/memmap.rs
++++ b/compiler/rustc_data_structures/src/memmap.rs
+@@ -2,14 +2,14 @@
+ use std::io;
+ use std::ops::{Deref, DerefMut};
+
+-/// A trivial wrapper for [`memmap2::Mmap`] (or `Vec<u8>` on WASM).
+-#[cfg(not(any(miri, target_arch = "wasm32")))]
++/// A trivial wrapper for [`memmap2::Mmap`] (or an owned byte copy on WASM/Scarlet).
++#[cfg(not(any(miri, target_arch = "wasm32", target_os = "scarlet")))]
+ pub struct Mmap(memmap2::Mmap);
+
+-#[cfg(any(miri, target_arch = "wasm32"))]
++#[cfg(any(miri, target_arch = "wasm32", target_os = "scarlet"))]
+ pub struct Mmap(Vec<u8>);
+
+-#[cfg(not(any(miri, target_arch = "wasm32")))]
++#[cfg(not(any(miri, target_arch = "wasm32", target_os = "scarlet")))]
+ impl Mmap {
+     /// # Safety
+     ///
+@@ -29,12 +29,14 @@ pub unsafe fn map(file: File) -> io::Result<Self> {
+     }
+ }
+
+-#[cfg(any(miri, target_arch = "wasm32"))]
++#[cfg(any(miri, target_arch = "wasm32", target_os = "scarlet"))]
+ impl Mmap {
+     #[inline]
+     pub unsafe fn map(mut file: File) -> io::Result<Self> {
+-        use std::io::Read;
++        use std::io::{Read, Seek};
+
++        // Match file mapping semantics even if the caller moved its cursor.
++        file.rewind()?;
+         let mut data = Vec::new();
+         file.read_to_end(&mut data)?;
+         Ok(Mmap(data))
+@@ -56,13 +58,13 @@ fn as_ref(&self) -> &[u8] {
+     }
+ }
+
+-#[cfg(not(any(miri, target_arch = "wasm32")))]
++#[cfg(not(any(miri, target_arch = "wasm32", target_os = "scarlet")))]
+ pub struct MmapMut(memmap2::MmapMut);
+
+-#[cfg(any(miri, target_arch = "wasm32"))]
++#[cfg(any(miri, target_arch = "wasm32", target_os = "scarlet"))]
+ pub struct MmapMut(Vec<u8>);
+
+-#[cfg(not(any(miri, target_arch = "wasm32")))]
++#[cfg(not(any(miri, target_arch = "wasm32", target_os = "scarlet")))]
+ impl MmapMut {
+     #[inline]
+     pub fn map_anon(len: usize) -> io::Result<Self> {
+@@ -82,11 +84,12 @@ pub fn make_read_only(self) -> std::io::Result<Mmap> {
+     }
+ }
+
+-#[cfg(any(miri, target_arch = "wasm32"))]
++#[cfg(any(miri, target_arch = "wasm32", target_os = "scarlet"))]
+ impl MmapMut {
+     #[inline]
+     pub fn map_anon(len: usize) -> io::Result<Self> {
+-        let data = Vec::with_capacity(len);
++        // Anonymous mappings expose len initialized zero bytes, not spare capacity.
++        let data = vec![0; len];
+         Ok(MmapMut(data))
+     }
+
+@@ -116,3 +119,34 @@ fn deref_mut(&mut self) -> &mut [u8] {
+         &mut self.0
+     }
+ }
++
++#[cfg(all(test, any(miri, target_arch = "wasm32", target_os = "scarlet")))]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn owned_file_mapping_reads_from_start_and_outlives_file() {
++        use std::io::Write;
++
++        let name = format!("rustc-owned-mmap-{}", std::process::id());
++        let path = std::env::temp_dir().join(name);
++        let mut file = std::fs::OpenOptions::new()
++            .read(true).write(true).create_new(true).open(&path).unwrap();
++        file.write_all(b"compiler metadata").unwrap();
++        // SAFETY: This test alone owns the new file and will not mutate it.
++        let mapping = unsafe { Mmap::map(file) }.unwrap();
++        std::fs::remove_file(path).unwrap();
++        assert_eq!(&*mapping, b"compiler metadata");
++    }
++
++    #[test]
++    fn owned_anonymous_mapping_has_initialized_length() {
++        let mut mapping = MmapMut::map_anon(17).unwrap();
++        assert_eq!(&*mapping, &[0; 17]);
++        mapping[16] = 42;
++        mapping.flush().unwrap();
++        let mapping = mapping.make_read_only().unwrap();
++        assert_eq!(mapping.len(), 17);
++        assert_eq!(mapping[16], 42);
++    }
++}
+diff --git a/compiler/rustc_driver_impl/Cargo.toml b/compiler/rustc_driver_impl/Cargo.toml
+index 531b9e0c8ff..149bfe307d8 100644
+--- a/compiler/rustc_driver_impl/Cargo.toml
++++ b/compiler/rustc_driver_impl/Cargo.toml
+@@ -65,7 +65,7 @@ features = [
+     "Win32_System_Diagnostics_Debug",
+ ]
+
+-[target.'cfg(not(target_family = "wasm"))'.dependencies]
++[target.'cfg(not(any(target_family = "wasm", target_os = "scarlet")))'.dependencies]
+ # tidy-alphabetical-start
+ ctrlc = "3.4.4"
+ # tidy-alphabetical-end
+diff --git a/compiler/rustc_driver_impl/src/lib.rs b/compiler/rustc_driver_impl/src/lib.rs
+index 7820198f2dc..3a9c01fcc92 100644
+--- a/compiler/rustc_driver_impl/src/lib.rs
++++ b/compiler/rustc_driver_impl/src/lib.rs
+@@ -1601,7 +1601,9 @@ pub fn init_logger_with_additional_layer<F, T>(
+ /// Install our usual `ctrlc` handler, which sets [`rustc_const_eval::CTRL_C_RECEIVED`].
+ /// Making this handler optional lets tools can install a different handler, if they wish.
+ pub fn install_ctrlc_handler() {
+-    #[cfg(all(not(miri), not(target_family = "wasm")))]
++    // Scarlet's native ABI does not expose Unix signal handlers. Leave native
++    // process termination to the kernel instead of linking the Unix ctrlc API.
++    #[cfg(all(not(miri), not(any(target_family = "wasm", target_os = "scarlet"))))]
+     ctrlc::set_handler(move || {
+         // Indicate that we have been signaled to stop, then give the rest of the compiler a bit of
+         // time to check CTRL_C_RECEIVED and run its own shutdown logic, but after a short amount
+diff --git a/compiler/rustc_session/src/config.rs b/compiler/rustc_session/src/config.rs
+index f326442c087..c911060c8bc 100644
+--- a/compiler/rustc_session/src/config.rs
++++ b/compiler/rustc_session/src/config.rs
+@@ -1325,7 +1325,13 @@ pub struct Sysroot {
+
+ impl Sysroot {
+     pub fn new(explicit: Option<PathBuf>) -> Sysroot {
+-        Sysroot { explicit, default: filesearch::default_sysroot() }
++        // An explicitly supplied sysroot is also usable when Scarlet cannot
++        // discover the executable path (for example an anonymous file exec).
++        #[cfg(target_os = "scarlet")]
++        let default = explicit.clone().unwrap_or_else(filesearch::default_sysroot);
++        #[cfg(not(target_os = "scarlet"))]
++        let default = filesearch::default_sysroot();
++        Sysroot { explicit, default }
+     }
+
+     /// Return explicit sysroot if it was passed with `--sysroot`, or default sysroot otherwise.
+diff --git a/compiler/rustc_session/src/filesearch.rs b/compiler/rustc_session/src/filesearch.rs
+index 12b294e124c..e4921309179 100644
+--- a/compiler/rustc_session/src/filesearch.rs
++++ b/compiler/rustc_session/src/filesearch.rs
+@@ -179,6 +179,13 @@ fn current_dll_path() -> Result<PathBuf, String> {
+     Ok(rustc_fs_util::fix_windows_verbatim_for_gcc(&path))
+ }
+
++// Scarlet keeps the compiler and its private libraries in one sysroot.
++// It has no dladdr API, so locate that sysroot from the executed compiler.
++#[cfg(target_os = "scarlet")]
++fn current_dll_path() -> Result<PathBuf, String> {
++    env::current_exe().map_err(|error| format!("cannot locate native compiler executable: {error}"))
++}
++
+ #[cfg(target_os = "wasi")]
+ fn current_dll_path() -> Result<PathBuf, String> {
+     Err("current_dll_path is not supported on WASI".to_string())
+diff --git a/compiler/rustc_target/src/spec/crt_objects.rs b/compiler/rustc_target/src/spec/crt_objects.rs
+index 2d84e78f255..3c6b4933a99 100644
+--- a/compiler/rustc_target/src/spec/crt_objects.rs
++++ b/compiler/rustc_target/src/spec/crt_objects.rs
+@@ -62,6 +62,17 @@ pub(super) fn all(obj: &'static str) -> CrtObjects {
+     ])
+ }
+
++/// Scarlet's entry references executable-local main and constructor bounds.
++/// Never inject it into a Rust dylib, cdylib, or proc-macro shared object.
++pub(super) fn pre_scarlet() -> CrtObjects {
++    new(&[
++        (LinkOutputKind::DynamicNoPicExe, &["scarlet-crt0.o"]),
++        (LinkOutputKind::DynamicPicExe, &["scarlet-crt0.o"]),
++        (LinkOutputKind::StaticNoPicExe, &["scarlet-crt0.o"]),
++        (LinkOutputKind::StaticPicExe, &["scarlet-crt0.o"]),
++    ])
++}
++
+ pub(super) fn pre_musl_self_contained() -> CrtObjects {
+     new(&[
+         (LinkOutputKind::DynamicNoPicExe, &["crt1.o", "crti.o", "crtbegin.o"]),
+diff --git a/compiler/rustc_target/src/spec/targets/aarch64_unknown_scarlet.rs b/compiler/rustc_target/src/spec/targets/aarch64_unknown_scarlet.rs
+index 8b7153cbf81..8fdcc7032bd 100644
+--- a/compiler/rustc_target/src/spec/targets/aarch64_unknown_scarlet.rs
++++ b/compiler/rustc_target/src/spec/targets/aarch64_unknown_scarlet.rs
+@@ -6,15 +6,17 @@
+ pub(crate) fn target() -> Target {
+     let opts = TargetOptions {
+         os: Os::Scarlet,
++        pre_link_objects: crate::spec::crt_objects::pre_scarlet(),
+         linker_flavor: LinkerFlavor::Gnu(Cc::No, Lld::Yes),
+         linker: Some("rust-lld".into()),
+         pre_link_args: TargetOptions::link_args(
+             LinkerFlavor::Gnu(Cc::No, Lld::No),
+-            &["--fix-cortex-a53-843419"],
++            &["--fix-cortex-a53-843419", "--dynamic-linker=/system/bin/scarlet-ld"],
+         ),
+         features: "+v8a,+outline-atomics,+strict-align,+neon".into(),
+         supported_sanitizers: SanitizerSet::KCFI | SanitizerSet::KERNELADDRESS,
+-        relocation_model: RelocModel::Static,
++        relocation_model: RelocModel::Pic,
++        dynamic_linking: true,
+         disable_redzone: true,
+         max_atomic_width: Some(128),
+         stack_probes: StackProbeType::Inline,
+@@ -32,7 +34,7 @@ pub(crate) fn target() -> Target {
+         metadata: TargetMetadata {
+             description: Some("Scarlet Native AArch64 (ARMv8-A with outline atomics)".into()),
+             tier: Some(3),
+-            host_tools: Some(false),
++            host_tools: Some(true),
+             std: Some(true),
+         },
+         pointer_width: 64,
+diff --git a/compiler/rustc_target/src/spec/targets/riscv64gc_unknown_scarlet.rs b/compiler/rustc_target/src/spec/targets/riscv64gc_unknown_scarlet.rs
+index 51e5fff30f0..b3c354f2bb0 100644
+--- a/compiler/rustc_target/src/spec/targets/riscv64gc_unknown_scarlet.rs
++++ b/compiler/rustc_target/src/spec/targets/riscv64gc_unknown_scarlet.rs
+@@ -9,7 +9,7 @@ pub(crate) fn target() -> Target {
+         metadata: TargetMetadata {
+             description: Some("Scarlet Native RISC-V (RV64IMAFDC ISA)".into()),
+             tier: Some(3),
+-            host_tools: Some(false),
++            host_tools: Some(true),
+             std: Some(true),
+         },
+         llvm_target: "riscv64-unknown-scarlet".into(),
+@@ -18,8 +18,13 @@ pub(crate) fn target() -> Target {
+
+         options: TargetOptions {
+             os: Os::Scarlet,
++            pre_link_objects: crate::spec::crt_objects::pre_scarlet(),
+             linker_flavor: LinkerFlavor::Gnu(Cc::No, Lld::Yes),
+             linker: Some("rust-lld".into()),
++            pre_link_args: TargetOptions::link_args(
++                LinkerFlavor::Gnu(Cc::No, Lld::No),
++                &["--dynamic-linker=/system/bin/scarlet-ld"],
++            ),
+             llvm_abiname: "lp64d".into(),
+             cpu: "generic-rv64".into(),
+             max_atomic_width: Some(64),
+@@ -29,7 +34,8 @@ pub(crate) fn target() -> Target {
+             // Scarlet does not currently populate ELF native TLS blocks for
+             // each thread. std uses its OS-level TLS backend instead.
+             has_thread_local: false,
+-            relocation_model: RelocModel::Static,
++            relocation_model: RelocModel::Pic,
++            dynamic_linking: true,
+             code_model: Some(CodeModel::Medium),
+             emit_debug_gdb_scripts: false,
+             eh_frame_header: false,
+diff --git a/library/std/src/sys/env_consts.rs b/library/std/src/sys/env_consts.rs
+index 573f540483b..77bf1c4eaad 100644
+--- a/library/std/src/sys/env_consts.rs
++++ b/library/std/src/sys/env_consts.rs
+@@ -411,6 +411,17 @@ pub mod os {
+     pub const EXE_EXTENSION: &str = "elf";
+ }
+
++#[cfg(target_os = "scarlet")]
++pub mod os {
++    pub const FAMILY: &str = "";
++    pub const OS: &str = "scarlet";
++    pub const DLL_PREFIX: &str = "lib";
++    pub const DLL_SUFFIX: &str = ".so";
++    pub const DLL_EXTENSION: &str = "so";
++    pub const EXE_SUFFIX: &str = "";
++    pub const EXE_EXTENSION: &str = "";
++}
++
+ // The fallback when none of the other gates match.
+ #[else]
+ pub mod os {
+diff --git a/library/std/src/sys/pal/scarlet/common.rs b/library/std/src/sys/pal/scarlet/common.rs
+index d9ef468b6c5..988c4a6ce69 100644
+--- a/library/std/src/sys/pal/scarlet/common.rs
++++ b/library/std/src/sys/pal/scarlet/common.rs
+@@ -5,7 +5,7 @@
+
+ // The kernel keeps the initial stack mapped for the life of the process.
+ // Publish auxv before calling constructors, which may detect CPU features.
+-// A custom entry point that skips `_start` keeps the outline helper's safe
++// A custom entry point that skips `__scarlet_start` keeps the outline helper's safe
+ // LL/SC default unless it performs equivalent auxv and constructor setup.
+ static AUXV: AtomicPtr<usize> = AtomicPtr::new(core::ptr::null_mut());
+
+@@ -80,36 +80,39 @@ pub fn abort_internal() -> ! {
+     core::intrinsics::abort();
+ }
+
++// Only the executable's CRT references `main` and linker-defined constructor
++// boundaries. Keeping those references out of std lets a Rust dylib embed std
++// without acquiring an entry point or unresolved executable-only symbols.
++//
++// SAFETY: The executable CRT passes the persistent kernel argc/argv/envp/auxv
++// arrays, its C ABI main shim and the linker-defined constructor range. This
++// function is entered once, before any application code runs.
+ #[cfg(not(test))]
+ #[unsafe(no_mangle)]
+-pub extern "C" fn _start(argc: isize, argv: *const *const c_char) -> ! {
+-    unsafe extern "C" {
+-        fn main(argc: i32, argv: *const *const c_char) -> i32;
+-    }
+-
+-    let envp = envp_from_argv(argc, argv);
+-    if !envp.is_null() {
+-        // SAFETY: Scarlet's process ABI puts auxv immediately after the
+-        // null-terminated envp array on the initial stack.
+-        unsafe {
+-            let mut end = envp;
+-            while !(*end).is_null() {
+-                end = end.add(1);
+-            }
+-            AUXV.store(end.add(1).cast_mut().cast(), Ordering::Release);
+-        }
+-    }
++pub unsafe extern "C" fn __scarlet_start(
++    argc: isize,
++    argv: *const *const c_char,
++    envp: *const *const c_char,
++    auxv: *const usize,
++    main: unsafe extern "C" fn(i32, *const *const c_char) -> i32,
++    init_array_start: *const unsafe extern "C" fn(),
++    init_array_end: *const unsafe extern "C" fn(),
++) -> ! {
++    AUXV.store(auxv.cast_mut(), Ordering::Release);
+     crate::sys::env::init(envp);
+
+-    #[cfg(target_arch = "aarch64")]
+-    // SAFETY: The ELF linker defines these bounds and the entries are C ABI
+-    // constructors. They run after auxv is available and before user main.
+-    unsafe {
+-        run_init_array()
+-    };
++    // The loader initializes dependency DSOs. Main-image constructors remain
++    // the executable CRT's responsibility on both Scarlet architectures.
++    let mut entry = init_array_start;
++    while entry < init_array_end {
++        // SAFETY: The CRT supplies the executable's array of C constructors.
++        unsafe { (*entry)() };
++        // SAFETY: The next pointer stays within or one past the constructor array.
++        entry = unsafe { entry.add(1) };
++    }
+
+-    // SAFETY: rustc emits `main` as the C ABI entry shim for normal Rust
+-    // executables. It calls `std::rt::lang_start`, which runs `sys::init`.
++    // SAFETY: rustc's executable main shim calls std::rt::lang_start, which
++    // initializes process arguments through sys::init before calling user main.
+     let code = unsafe { main(argc as i32, argv) };
+     #[cfg(target_os = "scarlet")]
+     unsafe {
+@@ -125,28 +128,28 @@ pub extern "C" fn _start(argc: isize, argv: *const *const c_char) -> ! {
+     crate::sys::pal::os::exit(code);
+ }
+
+-#[cfg(target_arch = "aarch64")]
+-unsafe fn run_init_array() {
++// RV32 remains static-only and retains its existing Rust entry. The separate
++// executable CRT is enabled only for the native 64-bit targets.
++#[cfg(all(not(test), target_pointer_width = "32"))]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn _start(argc: isize, argv: *const *const c_char) -> ! {
+     unsafe extern "C" {
+-        static __init_array_start: extern "C" fn();
+-        static __init_array_end: extern "C" fn();
+-    }
+-    let mut entry = &raw const __init_array_start;
+-    let end = &raw const __init_array_end;
+-    while entry < end {
+-        // SAFETY: The linker bounds cover an array of function pointers.
+-        unsafe { (*entry)() };
+-        // SAFETY: The next pointer remains within or one past the array.
+-        entry = unsafe { entry.add(1) };
+-    }
+-}
+-
+-fn envp_from_argv(argc: isize, argv: *const *const c_char) -> *const *const c_char {
+-    if argc < 0 || argv.is_null() {
+-        return crate::ptr::null();
++        fn main(argc: i32, argv: *const *const c_char) -> i32;
+     }
+-
+-    // SAFETY: The Scarlet process ABI passes a null-terminated argv array,
+-    // immediately followed by a null-terminated envp array.
+-    unsafe { argv.add(argc as usize + 1) }
++    let (envp, auxv) = if argc < 0 || argv.is_null() {
++        (crate::ptr::null(), crate::ptr::null())
++    } else {
++        // SAFETY: Scarlet places envp after argv, then auxv after envp's NULL.
++        unsafe {
++            let envp = argv.add(argc as usize + 1);
++            let mut end = envp;
++            while !(*end).is_null() {
++                end = end.add(1);
++            }
++            (envp, end.add(1).cast())
++        }
++    };
++    // SAFETY: Forward the kernel arrays and rustc's main shim. RV32 previously
++    // did not run an init array, so its empty constructor range stays unchanged.
++    unsafe { __scarlet_start(argc, argv, envp, auxv, main, crate::ptr::null(), crate::ptr::null()) }
+ }
+diff --git a/library/std/src/sys/pal/scarlet/os.rs b/library/std/src/sys/pal/scarlet/os.rs
+index fb348871251..c240e17a1df 100644
+--- a/library/std/src/sys/pal/scarlet/os.rs
++++ b/library/std/src/sys/pal/scarlet/os.rs
+@@ -1,5 +1,5 @@
+ use super::unsupported;
+-use crate::ffi::{CString, OsStr, OsString};
++use crate::ffi::{CStr, CString, OsStr, OsString, c_char};
+ use crate::path::{self, PathBuf};
+ use crate::sys::pal::abi;
+ use crate::{fmt, io, iter, slice, str};
+@@ -82,9 +82,20 @@ fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+ impl crate::error::Error for JoinPathsError {}
+
+ pub fn current_exe() -> io::Result<PathBuf> {
+-    // TODO(scarlet): expose the executed image path through the Native task ABI.
+-    // argv[0] is not reliable enough for std::env::current_exe.
+-    unsupported()
++    const AT_EXECFN: usize = 31;
++    let pointer = super::__scarlet_getauxval(AT_EXECFN) as *const c_char;
++    if pointer.is_null() {
++        return unsupported();
++    }
++    // SAFETY: Scarlet supplies a NUL-terminated pathname in the persistent
++    // initial stack. The kernel includes it only after resolving the executable
++    // to the same filesystem/inode in this task's filesystem view.
++    let bytes = unsafe { CStr::from_ptr(pointer) }.to_bytes();
++    let path = str::from_utf8(bytes).map_err(|_| io::ErrorKind::InvalidData)?;
++    if !path.starts_with('/') {
++        return Err(io::ErrorKind::InvalidData.into());
++    }
++    Ok(PathBuf::from(path))
+ }
+
+ pub fn temp_dir() -> PathBuf {
+diff --git a/library/std/src/sys/path/unix.rs b/library/std/src/sys/path/unix.rs
+index 611d250db40..16cbe0d9ca9 100644
+--- a/library/std/src/sys/path/unix.rs
++++ b/library/std/src/sys/path/unix.rs
+@@ -63,7 +63,13 @@ pub(crate) fn absolute(path: &Path) -> io::Result<PathBuf> {
+ }
+
+ pub(crate) fn is_absolute(path: &Path) -> bool {
+-    if cfg!(any(unix, target_os = "hermit", target_os = "wasi", target_os = "motor")) {
++    if cfg!(any(
++        unix,
++        target_os = "hermit",
++        target_os = "wasi",
++        target_os = "motor",
++        target_os = "scarlet",
++    )) {
+         path.has_root()
+     } else {
+         path.has_root() && path.prefix().is_some()
+diff --git a/src/bootstrap/src/core/build_steps/compile.rs b/src/bootstrap/src/core/build_steps/compile.rs
+index 762aeea9f45..93e041abfdc 100644
+--- a/src/bootstrap/src/core/build_steps/compile.rs
++++ b/src/bootstrap/src/core/build_steps/compile.rs
+@@ -915,15 +915,49 @@ fn make_run(run: RunConfig<'_>) {
+         });
+     }
+
+-    /// Builds and prepare startup objects like rsbegin.o and rsend.o
++    /// Builds and prepares startup objects without depending on built std.
+     ///
+-    /// These are primarily used on Windows right now for linking executables/dlls.
+-    /// They don't require any library support as they're just plain old object
+-    /// files, so we just use the nightly snapshot compiler to always build them (as
+-    /// no other compilers are guaranteed to be available).
++    /// Scarlet's executable CRT is assembled by the configured target C compiler.
++    /// Windows rsbegin.o and rsend.o use the nightly snapshot Rust compiler, as no
++    /// other Rust compilers are guaranteed to be available.
+     fn run(self, builder: &Builder<'_>) -> Vec<(PathBuf, DependencyType)> {
+         let for_compiler = self.compiler;
+         let target = self.target;
++        // Scarlet's executable entry is assembly, so this step does not need
++        // stage0 to recognize the custom Rust target or depend on built std.
++        if target.contains("scarlet")
++            && (target.starts_with("aarch64-") || target.starts_with("riscv64"))
++        {
++            let (source, clang_target, arch_flags): (&str, &str, &[&str]) =
++                if target.starts_with("aarch64-") {
++                    ("scarlet-aarch64.S", "aarch64-unknown-none", &[])
++                } else {
++                    // The base ISA entry also serves RV64 profile targets.
++                    ("scarlet-riscv64.S", "riscv64-unknown-none", &["-march=rv64gc", "-mabi=lp64d"])
++                };
++            let src_file = builder.src.join("library/rtstartup").join(source);
++            let dst_dir = builder.native_dir(target).join("rtstartup");
++            let dst_file = dst_dir.join("scarlet-crt0.o");
++            t!(fs::create_dir_all(&dst_dir));
++            let cc = builder.cc_tool(target);
++            let mut cmd = command(cc.path());
++            cmd.args(cc.args());
++            for (key, value) in cc.env() {
++                cmd.env(key, value);
++            }
++            if cc.is_like_clang() {
++                // Bare ELF triples also work with stock clangs that do not
++                // know Scarlet. Appending overrides any cc-rs target default.
++                cmd.arg(format!("--target={clang_target}"));
++            }
++            // Always rebuild this tiny object: compiler/flag changes must not
++            // leave a stale object just because the assembly mtime is unchanged.
++            cmd.args(arch_flags).arg("-c").arg(&src_file).arg("-o").arg(&dst_file).run(builder);
++            let obj = builder.sysroot_target_libdir(for_compiler, target).join("scarlet-crt0.o");
++            builder.copy_link(&dst_file, &obj, FileType::NativeLibrary);
++            return vec![(obj, DependencyType::Target)];
++        }
++
+         // Even though no longer necessary on x86_64, they are kept for now to
+         // avoid potential issues in downstream crates.
+         if !target.is_windows_gnu() {
+diff --git a/compiler/rustc_codegen_ssa/src/back/link/scarlet.rs b/compiler/rustc_codegen_ssa/src/back/link/scarlet.rs
+new file mode 100644
+index 00000000000..167687bd3c5
+--- /dev/null
++++ b/compiler/rustc_codegen_ssa/src/back/link/scarlet.rs
+@@ -0,0 +1,71 @@
++//! Mark actual Scarlet link outputs for the kernel's native ABI dispatcher.
++//!
++//! Generic ELF linkers emit ELFOSABI_SYSV even for the custom Scarlet target.
++//! This runs only after successful native linking, never on archives or objects.
++use std::fs::OpenOptions;
++use std::io::{self, Read, Seek, SeekFrom, Write};
++use std::path::Path;
++
++pub(super) fn mark_output(path: &Path, class: u8, machine: u16) -> io::Result<()> {
++    let mut file = OpenOptions::new().read(true).write(true).open(path)?;
++    mark_header(&mut file, class, machine)
++}
++
++fn mark_header(file: &mut (impl Read + Seek + Write), class: u8, machine: u16) -> io::Result<()> {
++    let mut header = [0u8; 20];
++    file.read_exact(&mut header)?;
++    if header[..4] != *b"\x7fELF"
++        || header[4] != class
++        || header[5] != 1
++        || header[6] != 1
++        || !matches!(header[7], 0 | 83)
++        || !matches!(u16::from_le_bytes([header[16], header[17]]), 2 | 3)
++        || u16::from_le_bytes([header[18], header[19]]) != machine
++    {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "linker produced an unexpected Scarlet ELF header",
++        ));
++    }
++    file.seek(SeekFrom::Start(7))?;
++    file.write_all(&[83])
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::io::Cursor;
++
++    fn image(class: u8, machine: u16, kind: u16) -> Vec<u8> {
++        let mut bytes = vec![0; 128];
++        bytes[..7].copy_from_slice(&[0x7f, b'E', b'L', b'F', class, 1, 1]);
++        bytes[16..18].copy_from_slice(&kind.to_le_bytes());
++        bytes[18..20].copy_from_slice(&machine.to_le_bytes());
++        bytes[100] = 42;
++        bytes
++    }
++
++    #[test]
++    fn marks_only_osabi_for_native_executables_and_dsos() {
++        for (class, machine) in [(2, 183), (2, 243), (1, 243)] {
++            for kind in [2, 3] {
++                let mut expected = image(class, machine, kind);
++                let mut cursor = Cursor::new(expected.clone());
++                mark_header(&mut cursor, class, machine).unwrap();
++                expected[7] = 83;
++                assert_eq!(cursor.into_inner(), expected);
++            }
++        }
++    }
++
++    #[test]
++    fn rejects_wrong_architecture_objects_and_foreign_abi_without_writing() {
++        let mut foreign = image(2, 183, 3);
++        foreign[7] = 3;
++        for original in [image(2, 243, 2), image(2, 183, 1), foreign, vec![0; 8]] {
++            let mut cursor = Cursor::new(original.clone());
++            assert!(mark_header(&mut cursor, 2, 183).is_err());
++            assert_eq!(cursor.into_inner(), original);
++        }
++    }
++}
+diff --git a/compiler/rustc_codegen_cranelift/docs/scarlet.md b/compiler/rustc_codegen_cranelift/docs/scarlet.md
+new file mode 100644
+index 00000000000..624e8116ec9
+--- /dev/null
++++ b/compiler/rustc_codegen_cranelift/docs/scarlet.md
+@@ -0,0 +1,58 @@
++# Native Scarlet AOT bringup
++
++The in-tree backend uses Cranelift 0.127.0 and keeps its normal Rust `dylib`
++entry point, `__rustc_codegen_backend`. Build it with the same compiler source
++and sysroot as the native Scarlet rustc driver: the Rust ABI is not stable across
++compiler versions. This is an AOT path; JIT and its libc/memory-mapping dependencies
++are not needed. Do not enable `jit` or `unstable-features` for the native build.
++
++The patched target-lexicon 0.13.3 package in
++`native-host-deps/target-lexicon-0.13.3` recognizes Scarlet explicitly. Both its
++build script and the backend's target parsing preserve the real Scarlet triple,
++ELF format, System V calling convention and LP64 data model. Its manifest patch
++is local to this backend workspace so Cargo vendoring can preserve that source.
++
++`cranelift-native` is excluded when the backend itself runs on Scarlet. It pulls
++in libc on RISC-V hosts for CPU discovery, which Scarlet does not use. Leave
++`-Ctarget-cpu=native` unset; requesting it produces an explicit unsupported
++message. AOT ISA selection still uses the requested Scarlet target architecture.
++
++Full compiler/backend builds belong in the Scarlet Rust Nix GitHub Actions job.
++Once that job prepares a matching build-host compiler and Scarlet rustc private
++libraries, the bootstrap backend step is:
++
++```sh
++python3 x.py build --stage 1 --host aarch64-unknown-scarlet \
++  --target aarch64-unknown-scarlet compiler/rustc_codegen_cranelift
++```
++
++The cross-host bootstrap configuration and linker must already be present. For
++RV64 use `riscv64gc-unknown-scarlet`. No local full compiler build is required for
++the source patch checks.
++
++For the first guest code generation proof, compile an asm-free function using
++an existing matching Scarlet `core` sysroot:
++
++```rust
++#![no_std]
++#[unsafe(no_mangle)]
++pub extern "C" fn answer() -> i32 { 42 }
++```
++
++```sh
++rustc answer.rs --crate-type lib --emit=obj -Cpanic=abort \
++  -Ccodegen-units=1 -Cdebuginfo=0 --target aarch64-unknown-scarlet \
++  --sysroot /system/rust -Zcodegen-backend=cranelift -o answer.o
++```
++
++This emits a real ELF object without calling an assembler or linker. Linking and
++running that object inside Scarlet is a separate required validation step.
++
++Nonempty inline/global assembly needs an external native GNU-compatible
++assembler. On Scarlet the backend runs `as`, or the path selected by `CG_CLIF_AS`.
++It never recursively selects an unavailable LLVM backend. A missing assembler
++produces an actionable code-generation error. Other hosts retain the existing
++LLVM-assisted assembly path unless `CG_CLIF_AS` or the build-time
++`CG_CLIF_FORCE_GNU_AS` option explicitly selects external assembly. A native
++assembler is not provided by this patch; Scarlet's current source tree does not
++contain one.
+diff --git a/library/rtstartup/scarlet-aarch64.S b/library/rtstartup/scarlet-aarch64.S
+new file mode 100644
+index 00000000000..aeea1b5b770
+--- /dev/null
++++ b/library/rtstartup/scarlet-aarch64.S
+@@ -0,0 +1,27 @@
++// Executable-only Scarlet entry. No Rust compiler, libc, TLS, or sysroot is
++// required to assemble this object. argc/argv arrive in x0/x1, SP aligned to 16.
++.section .text._start,"ax",%progbits
++.p2align 2
++.weak _start
++.type _start,%function
++.hidden main
++.hidden __init_array_start
++.hidden __init_array_end
++_start:
++    // envp = argv + argc + 1; auxv follows the envp NULL terminator.
++    add x2, x0, #1
++    add x2, x1, x2, lsl #3
++    mov x3, x2
++1:
++    ldr x7, [x3], #8
++    cbnz x7, 1b
++    adrp x4, main
++    add x4, x4, :lo12:main
++    adrp x5, __init_array_start
++    add x5, x5, :lo12:__init_array_start
++    adrp x6, __init_array_end
++    add x6, x6, :lo12:__init_array_end
++    // std may live in this executable or in one of its Rust dylibs.
++    b __scarlet_start
++.size _start, .-_start
++.section .note.GNU-stack,"",%progbits
+diff --git a/library/rtstartup/scarlet-riscv64.S b/library/rtstartup/scarlet-riscv64.S
+new file mode 100644
+index 00000000000..33fe9031543
+--- /dev/null
++++ b/library/rtstartup/scarlet-riscv64.S
+@@ -0,0 +1,29 @@
++// Executable-only Scarlet entry. No Rust compiler, libc, TLS, or sysroot is
++// required to assemble this object. argc/argv arrive in a0/a1, SP aligned to 16.
++.section .text._start,"ax",@progbits
++.p2align 2
++.weak _start
++.type _start,@function
++.hidden main
++.hidden __init_array_start
++.hidden __init_array_end
++.option push
++.option norelax
++_start:
++    // envp = argv + argc + 1; auxv follows the envp NULL terminator.
++    addi a2, a0, 1
++    slli a2, a2, 3
++    add a2, a1, a2
++    mv a3, a2
++1:
++    ld t0, 0(a3)
++    addi a3, a3, 8
++    bnez t0, 1b
++    lla a4, main
++    lla a5, __init_array_start
++    lla a6, __init_array_end
++    // std may live in this executable or in one of its Rust dylibs.
++    tail __scarlet_start
++.size _start, .-_start
++.option pop
++.section .note.GNU-stack,"",@progbits
+diff --git a/library/rtstartup/README.scarlet.md b/library/rtstartup/README.scarlet.md
+new file mode 100644
+index 00000000000..8e0b4a2ab18
+--- /dev/null
++++ b/library/rtstartup/README.scarlet.md
+@@ -0,0 +1,47 @@
++# Scarlet executable startup
++
++`scarlet-crt0.o` supplies a weak `_start` in its own text section. The Scarlet
++AArch64 and RV64 targets add this object only to executable link output kinds;
++Rust dylibs, cdylibs, and proc macros do not receive it. It calls the C ABI
++`__scarlet_start` exported by std, which can live in the executable or a Rust
++dylib containing statically linked std.
++
++The entry preserves the kernel's stack alignment and forwards these seven
++native register arguments:
++
++1. `argc` (`x0` / `a0`)
++2. `argv` (`x1` / `a1`)
++3. `envp`, immediately after the `argv` NULL
++4. `auxv`, immediately after the `envp` NULL
++5. the executable's `main` function
++6. the executable's `__init_array_start`
++7. the executable's `__init_array_end`
++
++Std publishes auxv and initializes the environment before calling the main
++image's constructors. The userspace loader initializes dependency constructors.
++Std contains no direct reference to `main` or linker-defined constructor bounds.
++
++Bootstrap assembles the architecture source with the configured target C
++compiler, then installs the object in the target sysroot's `lib` directory. For
++Clang it selects `aarch64-unknown-none` or `riscv64-unknown-none` explicitly; this
++requires neither Scarlet support in the stage0 Rust compiler nor libc headers.
++RV64 uses the `rv64gc` / `lp64d` base ISA and ABI, including for the RVA23
++profile target. RV32 retains its existing static Rust entry.
++
++A `no_std` application supplying a strong `_start` overrides the weak CRT entry.
++Rust's normal section garbage collection discards the unused CRT and its runtime
++references. An application selecting another entry with `-e` also discards it
++unless that entry explicitly calls `_start`. Custom targets that disable section
++garbage collection and provide their own startup should clear `pre-link-objects`.
++
++Run the lightweight assembly/link checks with stock LLVM tools:
++
++```sh
++python3 library/rtstartup/test-scarlet-crt.py \
++  --cc clang --linker ld.lld --readelf llvm-readelf
++```
++
++These checks cover static, dynamic and PIE executables, empty constructor arrays,
++a shared runtime without executable-only symbols, and standalone custom entries.
++They substitute a tiny C runtime and do not replace building std or booting a
++native Rust executable.
+diff --git a/library/rtstartup/test-scarlet-crt.py b/library/rtstartup/test-scarlet-crt.py
+new file mode 100644
+index 00000000000..0e59efefa0b
+--- /dev/null
++++ b/library/rtstartup/test-scarlet-crt.py
+@@ -0,0 +1,100 @@
++#!/usr/bin/env python3
++"""Assemble/link Scarlet CRT contracts with stock LLVM; no Rust build needed."""
++import argparse
++from pathlib import Path
++import subprocess
++import tempfile
++
++
++def run(*args):
++    subprocess.run([str(arg) for arg in args], check=True)
++
++
++def symbols(readelf, path):
++    output = subprocess.check_output([readelf, "-Ws", str(path)], text=True)
++    return [line.split() for line in output.splitlines() if " UND " in line or " FUNC " in line]
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--cc", default="clang")
++    parser.add_argument("--linker", default="ld.lld")
++    parser.add_argument("--readelf", default="llvm-readelf")
++    args = parser.parse_args()
++    source = Path(__file__).resolve().parent
++    with tempfile.TemporaryDirectory(prefix="scarlet-crt-") as temporary:
++        out = Path(temporary)
++        (out / "main.c").write_text("""
++static volatile int initialized;
++__attribute__((constructor)) static void initialize(void) { initialized = 1; }
++int main(int argc, const char **argv) { return initialized + argc + (argv != 0); }
++""")
++        (out / "empty.c").write_text("int main(int argc, const char **argv) { return argc; }\n")
++        # This substitutes for std to check the executable/DSO linking boundary;
++        # it does not claim to test the Rust runtime or execute Scarlet code.
++        (out / "runtime.c").write_text("""
++typedef __INTPTR_TYPE__ word;
++typedef void (*ctor)(void);
++__attribute__((noreturn)) void __scarlet_start(word argc, const char **argv,
++    const char **envp, const word *auxv, int (*main_fn)(int, const char **),
++    ctor *begin, ctor *end) {
++    while (begin < end) (*begin++)();
++    volatile int result = main_fn((int)argc, argv) + (envp != 0) + (auxv != 0);
++    (void)result;
++    for (;;) {}
++}
++""")
++        for arch in ("aarch64", "riscv64"):
++            flags = [f"--target={arch}-unknown-none"]
++            if arch == "riscv64":
++                flags += ["-march=rv64gc", "-mabi=lp64d"]
++            custom = out / f"{arch}-custom.S"
++            directive = "%progbits" if arch == "aarch64" else "@progbits"
++            jump = "b" if arch == "aarch64" else "j"
++            custom.write_text(f"""
++.section .text.custom,"ax",{directive}
++.global _start
++.global custom_entry
++_start:
++custom_entry:
++    {jump} custom_entry
++""")
++            objects = {}
++            for name, input_path in (
++                ("crt", source / f"scarlet-{arch}.S"),
++                ("main", out / "main.c"),
++                ("empty", out / "empty.c"),
++                ("runtime", out / "runtime.c"),
++                ("custom", custom),
++            ):
++                objects[name] = out / f"{arch}-{name}.o"
++                run(args.cc, *flags, "-fPIC", "-ffunction-sections", "-fno-stack-protector",
++                    "-c", input_path, "-o", objects[name])
++
++            def link(name, *inputs):
++                path = out / f"{arch}-{name}"
++                run(args.linker, "--gc-sections", "--no-undefined", "-z", "max-page-size=4096",
++                    "-o", path, *inputs)
++                return path
++
++            crt, executable, runtime, raw = (objects[key] for key in ("crt", "main", "runtime", "custom"))
++            link("static.elf", crt, executable, runtime)
++            link("no-constructors.elf", crt, objects["empty"], runtime)
++            dso = link("runtime.so", "-shared", "-soname", f"{arch}-runtime.so", runtime)
++            dynamic = link("dynamic.elf", crt, executable, dso, "--dynamic-linker=/system/bin/scarlet-ld")
++            link("pie.elf", "-pie", crt, executable, dso, "--dynamic-linker=/system/bin/scarlet-ld")
++            standalone = link("no-std.elf", crt, raw)
++            alternate = link("custom-entry.elf", "-e", "custom_entry", crt, raw)
++            forbidden = {"main", "__scarlet_start", "__init_array_start", "__init_array_end"}
++            for binary in (dso, standalone, alternate):
++                entries = symbols(args.readelf, binary)
++                assert not any("UND" in fields and fields[-1] in forbidden for fields in entries), binary
++            assert not any(fields[-1] == "_start" for fields in symbols(args.readelf, dso)), dso
++            entries = symbols(args.readelf, dynamic)
++            assert any(fields[-1] == "_start" and "UND" not in fields for fields in entries), dynamic
++            assert any(fields[-1] == "__scarlet_start" and "UND" in fields for fields in entries), dynamic
++            print(f"{arch}: static, dynamic, PIE, empty constructors, shared runtime, no_std/custom entry passed")
++
++
++if __name__ == "__main__":
++    main()

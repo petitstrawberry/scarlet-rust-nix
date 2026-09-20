@@ -171,3 +171,62 @@ $out/
     src/rust/library/
   manifest.toml
 ```
+
+
+## Experimental compiler hosted on Scarlet
+
+The separate **Build Scarlet Native Host** Actions workflow cross-builds a compiler
+that runs inside Scarlet. It does not replace the existing Linux/macOS toolchains
+or change their pinned Rust revision. LLVM 21, Clang and LLD are downloaded as Nix
+binaries; the job fails instead of building those projects if substitution is
+unavailable. The fixed vendored Rust source is copied out of the Nix store before
+applying the experimental `native-host/` patches.
+
+Pushes to `feat/native-scarlet-host` and relevant pull requests build AArch64.
+Once the workflow is available on the repository default branch, it can also be
+started manually for AArch64 or RISC-V64:
+
+```sh
+gh workflow run native-host.yml --ref feat/native-scarlet-host \
+  -f target=aarch64-unknown-scarlet -f backend=cranelift
+gh run list --workflow native-host.yml
+```
+
+All attempts upload a `native-host-evidence-<target>` artifact with the bootstrap
+configuration, exact command, source patch identities, manifest and logs, including
+compile failures. Successful builds additionally upload `native-host-<target>`:
+a sysroot tarball, SHA-256 checksum and manifest. Download one without compiling
+anything locally:
+
+```sh
+scripts/fetch-native-host.sh RUN_ID aarch64-unknown-scarlet ./scarlet-native-rustc
+```
+
+The download validates the checksum, target, run ID and Cranelift code-generation
+capability, and extracts only into a new directory. Frontend-only `dummy`
+artifacts require an explicit `gh run download` for diagnostic work. The sysroot contains `bin/rustc`, its native shared libraries and
+the matching native standard-library rlibs. It must be installed in a Scarlet
+image together with `/system/bin/scarlet-ld`; Linux/macOS cannot run its compiler.
+The default `cranelift` backend is built for native code generation without a
+native LLVM/C++ dependency. The optional `dummy` backend permits frontend
+diagnostics but cannot generate code.
+A successful build or ELF identity check does **not** prove guest execution or
+compilation. The manifest deliberately records `built-not-guest-verified` until
+those end-to-end checks are performed separately.
+
+Actions caches compiler intermediates and prepared source separately for each
+machine, backend, branch, fork and pinned Nix environment. Partial work is saved after a
+compile failure so a corrected patch can reuse it. A checksum-based source sync
+preserves the timestamps of unchanged files and replaces changed files; the
+large vendor tree is restored from Nix rather than cached twice. External
+bootstrap toolchains and Nix store paths are never modified. The workflow neither
+uploads these experimental outputs to the production Cachix cache nor moves its
+consumer pins.
+
+The equivalent build command is documented for dedicated builders, but is not
+needed to fetch the Actions artifacts:
+
+```sh
+nix develop .#native-host --accept-flake-config --command \
+  scripts/build-native-host.sh --target aarch64-unknown-scarlet
+```

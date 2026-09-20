@@ -2,3 +2,7 @@ result
 result-*
 /.direnv
 __pycache__/
+
+/.native-host-work/
+
+/native-host-output/

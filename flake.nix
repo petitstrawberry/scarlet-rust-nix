@@ -129,13 +129,53 @@
         in
         {
           scarlet-rust-source = rustSrc;
+          # Exposed separately for the experimental native-host Actions build.
+          # Existing toolchain outputs and their source pins remain unchanged.
+          scarlet-bootstrap-rust = bootstrapRust;
           scarlet-llvm = llvmPackages.llvm;
           scarlet-lld = llvmPackages.lld;
+          scarlet-clang = llvmPackages.clang-unwrapped;
           scarlet-rust-vendored-src = vendoredRustSrc;
           scarlet-rust-bootstrap-cargo-deps = vendoredRustSrc;
           inherit scarlet-rustc;
           inherit scarlet-rust-toolchain;
           default = scarlet-rust-toolchain;
+        }
+      );
+
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          packages = self.packages.${system};
+          llvm = pkgs.llvmPackages_21;
+        in
+        {
+          native-host = pkgs.mkShell {
+            packages = [
+              packages.scarlet-bootstrap-rust
+              llvm.clang
+              llvm.llvm
+              llvm.lld
+              pkgs.python3
+              pkgs.git
+              pkgs.rsync
+              pkgs.cmake
+              pkgs.ninja
+              pkgs.pkg-config
+              pkgs.zlib
+              pkgs.zstd
+              pkgs.openssl
+            ];
+            SCARLET_BOOTSTRAP = packages.scarlet-bootstrap-rust;
+            SCARLET_VENDORED_SOURCE = packages.scarlet-rust-vendored-src;
+            SCARLET_LLVM_CONFIG = "${llvm.llvm.dev}/bin/llvm-config";
+            SCARLET_CLANG = "${llvm.clang-unwrapped}/bin/clang";
+            SCARLET_CLANGXX = "${llvm.clang-unwrapped}/bin/clang++";
+            SCARLET_LLVM_AR = "${llvm.llvm}/bin/llvm-ar";
+            SCARLET_NATIVE_LINKER = "${llvm.lld}/bin/ld.lld";
+            SCARLET_RUST_REV = rustRev;
+          };
         }
       );
 
