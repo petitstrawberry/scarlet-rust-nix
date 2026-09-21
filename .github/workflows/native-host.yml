@@ -1,17 +1,15 @@
 name: Build Scarlet Native Host
 
 on:
-  push:
-    branches: [ "feat/native-scarlet-host" ]
-    paths: &native_paths
+  # PR updates run once; push+PR otherwise starts and cancels the same bootstrap.
+  pull_request:
+    paths:
       - .github/workflows/native-host.yml
       - flake.nix
       - flake.lock
       - nix/vendor-rust-src.nix
       - native-host/**
       - scripts/*native*host*
-  pull_request:
-    paths: *native_paths
   workflow_dispatch:
     inputs:
       target:
@@ -33,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  # A push followed by a PR for the same branch must share one expensive build.
+  # A new PR revision replaces only that branch's previous expensive build.
   group: native-host-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ inputs.target || 'aarch64-unknown-scarlet' }}-${{ inputs.backend || 'cranelift' }}
   cancel-in-progress: true
 
