@@ -62,7 +62,23 @@ def main():
     missing = subprocess.run([*command, "-o", str(args.output / "unresolved")], capture_output=True, text=True)
     if missing.returncode == 0 or "answer" not in missing.stderr:
         raise ValueError("linker did not diagnose the missing strong symbol")
-    print("Host-executed linker: object/archive links and undefined-symbol rejection passed; guest execution pending.")
+    rust_output = args.output / "host-linked-rust"
+    environment = dict(os.environ, SCARLET_RUST_LINK_CAPTURE=str((args.output / "rust").resolve()),
+                       SCARLET_HOST_WILD=str(args.linker.resolve()))
+    subprocess.run([str(Path(os.environ["SCARLET_TOOLCHAIN"]) / "bin/rustc"),
+                    "--edition=2024", "--target", args.target, "--crate-name=linker_hello",
+                    "-Cpanic=abort", "-Copt-level=1", "-Clinker-flavor=gnu-lld",
+                    "-Clinker=" + str(Path(__file__).with_name("capture-rust-link.py").resolve()),
+                    "-Clink-arg=-z", "-Clink-arg=max-page-size=4096",
+                    str(source / "hello.rs"), "-o", str(rust_output)], env=environment, check=True)
+    audit(rust_output, args.target)
+    # Replay only portable inputs; the guest must not need any host temp paths.
+    portable = (args.output / "rust/link.args").read_text().splitlines()
+    replay = args.output.resolve() / "host-linked-rust-replay"
+    subprocess.run([str(args.linker.resolve()), *portable, "--threads=1", "-o", str(replay)],
+                   cwd=args.output / "rust", check=True)
+    audit(replay, args.target)
+    print("Host-executed linker: object/archive/Rust std links and undefined-symbol rejection passed; guest execution pending.")
 
 
 if __name__ == "__main__":

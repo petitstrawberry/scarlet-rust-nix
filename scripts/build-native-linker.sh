@@ -45,6 +45,7 @@ mkdir -p "$package/bin" "$package/fixtures"
 cp "$source_dir/LICENSE-MIT" "$source_dir/LICENSE-APACHE" "$package/"
 cp "$CARGO_TARGET_DIR/$target/opt/wild" "$package/bin/wild"
 cp "$output/fixtures/"*.o "$output/fixtures/"*.a "$package/fixtures/"
+cp -R "$output/fixtures/rust" "$package/fixtures/rust"
 "$RUSTC" --edition 2024 "$repo_root/native-linker/probe.rs" --target "$target" \
     -Cpanic=abort -Copt-level=1 -Clinker="$SCARLET_NATIVE_LINKER" \
     -Clink-arg=-z -Clink-arg=max-page-size=4096 -o "$package/bin/native-linker-probe"

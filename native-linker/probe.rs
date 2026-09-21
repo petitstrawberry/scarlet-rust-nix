@@ -78,7 +78,25 @@ fn run() -> Result<()> {
     if missing.status.success() || !String::from_utf8_lossy(&missing.stderr).contains("answer") {
         return Err("missing strong symbol was not diagnosed".into());
     }
-    fs::write(output.join("PASS"), "Guest linker created and executed both ELFs; exit status 37.\n")?;
+    let rust = fixtures.join("rust");
+    let arguments = fs::read_to_string(rust.join("link.args"))?;
+    let executable = output.join("hello-rust");
+    println!("NATIVE_LINKER linking Rust std");
+    let linked = Command::new(linker).current_dir(&rust).args(arguments.lines())
+        .args(["--threads=1", "-o"]).arg(&executable).output()?;
+    record(output, "link-rust", &linked)?;
+    if !linked.status.success() {
+        return Err(format!("Rust std link failed: {}", String::from_utf8_lossy(&linked.stderr)).into());
+    }
+    check_elf(&executable)?;
+    let executed = Command::new(&executable).output()?;
+    record(output, "run-rust", &executed)?;
+    if executed.status.code() != Some(37) || executed.stdout != b"SCARLET_NATIVE_LINKER_RUST_OK\n" {
+        return Err(format!("Rust std executable failed: status={}, stdout={:?}, stderr={:?}",
+                           executed.status, executed.stdout, executed.stderr).into());
+    }
+    println!("NATIVE_LINKER Rust std executable printed expected text and returned 37");
+    fs::write(output.join("PASS"), "Guest linker created and executed object, archive and Rust std ELFs; exit status 37.\n")?;
     println!("NATIVE_LINKER FULL PASS");
     Ok(())
 }
