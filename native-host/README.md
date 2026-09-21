@@ -21,11 +21,18 @@ entropy (for QEMU, VirtIO RNG); it never accepts Scarlet's pseudo-random fallbac
 The initial stacker backend uses aligned allocations without guard pages.
 Tempfile supports native named creation and keeping/overwrite rename; unsupported
 identity/permission/atomic no-clobber operations return errors explicitly.
+Scarlet compiler builds also select blake3's pure Rust implementation; its
+optional AArch64 C implementation requires libc headers that Scarlet does not
+provide. Build-host targets retain their normal blake3 features.
 
 `prepare_host_build.py` emits the actual bootstrap config and command. The
 build-host compiler uses cached LLVM; the Scarlet compiler defaults to Cranelift.
 The optional dummy backend is only a frontend diagnostic and cannot generate
-code. The download helper rejects dummy artifacts.
+code. The download helper rejects dummy artifacts. Native compiler artifacts
+omit the bootstrap sysroot's `rustlib/src` and `rustlib/rustc-src` source
+components: they are not needed to run rustc and would otherwise copy the full
+checkout, including foreign-architecture ELF test fixtures, into the runtime
+artifact.
 
 Before bootstrap, a tiny build-host LLVM client is linked and executed using
 `llvm-config --link-static --system-libs`. This checks that the Nix shell exposes
@@ -36,4 +43,8 @@ A successful Actions artifact proves cross-build and ELF identity only. Native
 startup, Rust code generation, assembly/linker integration, and executing the
 compiled program still require Scarlet guest evidence. In particular, Cranelift
 needs a native assembler for inline/global assembly and a native linker for
-executables. No LLVM/C++ native runtime is silently bundled or assumed.
+executables. The separate [native Wild port](https://github.com/petitstrawberry/scarlet-rust-nix/pull/21)
+now supplies the linker and passes native object/archive/Rust std link-and-run
+tests on AArch64 and RV64. Integrating it with this compiler still requires the
+full guest compile-and-run probe. No LLVM/C++ native runtime is silently bundled
+or assumed.

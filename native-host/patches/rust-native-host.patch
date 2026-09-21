@@ -598,7 +598,7 @@ index fb348871251..c240e17a1df 100644
 -    // argv[0] is not reliable enough for std::env::current_exe.
 -    unsupported()
 +    const AT_EXECFN: usize = 31;
-+    let pointer = super::__scarlet_getauxval(AT_EXECFN) as *const c_char;
++    let pointer = crate::ptr::with_exposed_provenance::<c_char>(super::__scarlet_getauxval(AT_EXECFN));
 +    if pointer.is_null() {
 +        return unsupported();
 +    }
@@ -1060,3 +1060,71 @@ index 00000000000..0e59efefa0b
 +
 +if __name__ == "__main__":
 +    main()
+diff --git a/compiler/rustc_span/Cargo.toml b/compiler/rustc_span/Cargo.toml
+index 7889e533153..b4c8c107b81 100644
+--- a/compiler/rustc_span/Cargo.toml
++++ b/compiler/rustc_span/Cargo.toml
+@@ -23,3 +23,7 @@ sha2 = "0.10.1"
+ tracing = "0.1"
+ unicode-width = "0.2.2"
+ # tidy-alphabetical-end
++
++[target.'cfg(target_os = "scarlet")'.dependencies]
++# Scarlet has no C libc headers for blake3's optional AArch64 NEON backend.
++blake3 = { version = "1.5.2", features = ["pure"] }
+diff --git a/library/std/src/sys/thread/scarlet.rs b/library/std/src/sys/thread/scarlet.rs
+index 3f88d18aa0b..36b8b90afec 100644
+--- a/library/std/src/sys/thread/scarlet.rs
++++ b/library/std/src/sys/thread/scarlet.rs
+@@ -4,2 +4,3 @@
+ use crate::sys::pal::abi;
++use crate::sys::thread_local::key::{TLS_CLEANUP_OFFSET, TLS_MAPPING_SIZE};
+ use crate::thread::ThreadInit;
+@@ -10,4 +11,2 @@
+ const STACK_ALIGN: usize = 16;
+-const TLS_MAPPING_SIZE: usize = PAGE_SIZE;
+-const TLS_CLEANUP_OFFSET: usize = 2048;
+ const THREAD_CLEANUP_MAGIC: u64 = 0x5343_5448_5244_0001;
+@@ -26,2 +25,7 @@ struct ThreadCleanupRecord {
+-
++
++const _: () = assert!(
++    TLS_CLEANUP_OFFSET + crate::mem::size_of::<ThreadCleanupRecord>() <= TLS_MAPPING_SIZE,
++    "Scarlet thread cleanup record overlaps its TLS key table",
++);
++
+ struct ThreadStart {
+diff --git a/library/std/src/sys/thread_local/key/scarlet.rs b/library/std/src/sys/thread_local/key/scarlet.rs
+index e60f2c5ebd8..4db6f377cc1 100644
+--- a/library/std/src/sys/thread_local/key/scarlet.rs
++++ b/library/std/src/sys/thread_local/key/scarlet.rs
+@@ -7,4 +7,9 @@
+ const PAGE_SIZE: usize = 4096;
+-const TLS_KEY_COUNT: usize = 128;
+ const POINTER_SIZE: usize = mem::size_of::<usize>();
++// Scarlet does not have native ELF TLS yet, so every Rust `thread_local!`
++// consumes one runtime key. rustc alone exceeds the POSIX-minimum 128 keys.
++const TLS_KEY_COUNT: usize = 1024;
++// Spawned threads keep their cleanup record after the complete key table.
++pub(crate) const TLS_CLEANUP_OFFSET: usize = TLS_KEY_COUNT * POINTER_SIZE;
++pub(crate) const TLS_MAPPING_SIZE: usize = TLS_CLEANUP_OFFSET + PAGE_SIZE;
+ const DTOR_ROUNDS: usize = 4;
+@@ -95,3 +100,3 @@ fn main_tls_base() -> usize {
+         0,
+-        PAGE_SIZE,
++        TLS_MAPPING_SIZE,
+         abi::mmap::PROT_READ | abi::mmap::PROT_WRITE,
+@@ -105,3 +110,3 @@ fn main_tls_base() -> usize {
+         Err(existing) => {
+-            let _ = abi::memory_unmap(new_base, PAGE_SIZE);
++            let _ = abi::memory_unmap(new_base, TLS_MAPPING_SIZE);
+             existing
+diff --git a/library/std/src/sys/thread_local/mod.rs b/library/std/src/sys/thread_local/mod.rs
+index d602f2259a8..320af615c4f 100644
+--- a/library/std/src/sys/thread_local/mod.rs
++++ b/library/std/src/sys/thread_local/mod.rs
+@@ -201,3 +201,3 @@ pub(crate) mod key {
+             pub(super) use racy::LazyKey;
+-            pub(crate) use scarlet::run_dtors;
++            pub(crate) use scarlet::{TLS_CLEANUP_OFFSET, TLS_MAPPING_SIZE, run_dtors};
+             pub(super) use scarlet::{Key, get, set};
