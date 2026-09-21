@@ -187,7 +187,7 @@ Once the workflow is available on the repository default branch, it can also be
 started manually for AArch64 or RISC-V64:
 
 ```sh
-gh workflow run native-host.yml --ref feat/native-scarlet-host \
+gh workflow run native-host.yml --ref main \
   -f target=aarch64-unknown-scarlet -f backend=cranelift
 gh run list --workflow native-host.yml
 ```
@@ -230,3 +230,20 @@ needed to fetch the Actions artifacts:
 nix develop .#native-host --accept-flake-config --command \
   scripts/build-native-host.sh --target aarch64-unknown-scarlet
 ```
+
+## Native toolchain releases
+
+Native compiler and Wild artifacts can be promoted into architecture-specific,
+deterministic `tar.zst` release candidates without rebuilding Rust. The package
+is installed under `/opt/scarlet/toolchains/rust/<version>` and contains
+relative `librustc_driver` links beside both `rustc` and the Cranelift backend,
+a `rust-lld` link to Wild, the backend itself and static target libraries.
+
+`/system/bin/scarlet-ld` remains part of the Scarlet repository and image. Each
+toolchain manifest records the exact Scarlet commit required by the bundle; the
+runtime loader is deliberately absent from the archive. See
+[`native-toolchain/README.md`](native-toolchain/README.md) for the package
+contract and local command. The **Package Scarlet Native Rust Toolchain** manual
+workflow takes exact native-host and native-linker run IDs, uploads both
+architectures as temporary Actions artifacts, and creates a draft release only
+when explicitly requested.
