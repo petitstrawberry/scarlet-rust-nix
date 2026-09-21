@@ -598,7 +598,7 @@ index fb348871251..c240e17a1df 100644
 -    // argv[0] is not reliable enough for std::env::current_exe.
 -    unsupported()
 +    const AT_EXECFN: usize = 31;
-+    let pointer = super::__scarlet_getauxval(AT_EXECFN) as *const c_char;
++    let pointer = crate::ptr::with_exposed_provenance::<c_char>(super::__scarlet_getauxval(AT_EXECFN));
 +    if pointer.is_null() {
 +        return unsupported();
 +    }
