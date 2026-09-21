@@ -69,6 +69,7 @@ def main():
                     "--edition=2024", "--target", args.target, "--crate-name=linker_hello",
                     "-Cpanic=abort", "-Copt-level=1", "-Clinker-flavor=ld.lld",
                     "-Clinker=" + str(Path(__file__).with_name("capture-rust-link.py").resolve()),
+                    "-Clink-arg=-m", "-Clink-arg=" + emulation,
                     "-Clink-arg=-z", "-Clink-arg=max-page-size=4096",
                     str(source / "hello.rs"), "-o", str(rust_output)], env=environment, check=True)
     audit(rust_output, args.target)
