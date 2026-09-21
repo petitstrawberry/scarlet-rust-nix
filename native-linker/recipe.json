@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "upstream": "https://github.com/wild-linker/wild.git",
+  "revision": "318af2cef56fbfe81b6ac6985406bf7891dcf08d",
+  "version": "0.9.0",
+  "rust_toolchain_revision": "39c689a4859b9d8ee1828720135defd125c03d31"
+}

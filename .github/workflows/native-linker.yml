@@ -1,0 +1,80 @@
+name: Build Scarlet Native Linker
+
+on:
+  # PR updates run once. Also running on push produces duplicate cancelled checks
+  # for the same commit and can hold the concurrency slot for several minutes.
+  pull_request:
+    paths: ['native-linker/**', 'scripts/*native-linker*', '.github/workflows/native-linker.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-linker-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-unknown-scarlet, riscv64gc-unknown-scarlet]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            extra-substituters = https://scarlet-rust-toolchain.cachix.org
+            extra-trusted-public-keys = scarlet-rust-toolchain.cachix.org-1:p+coBExi0nNTIvWF/oM9H9/1/GhwFtqGZ2Vs+4pYl6o=
+      - uses: actions/cache/restore@v4
+        id: linker-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            .native-linker-work/target
+          key: native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/wild-scarlet.patch') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/wild-scarlet.patch') }}-
+            native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-
+      - name: Get prebuilt cross compiler and LLVM tools
+        run: nix build .#scarlet-rust-toolchain .#scarlet-clang .#scarlet-llvm .#scarlet-lld --no-link --max-jobs 0 --accept-flake-config
+      - name: Build and check native linker
+        run: |
+          bash -n scripts/build-native-linker.sh
+          nix develop --impure --expr 'import ./native-linker/shell.nix { flake = builtins.getFlake (toString ./.); }' \
+            --accept-flake-config --command bash scripts/build-native-linker.sh '${{ matrix.target }}'
+      - name: Save partial compiler work
+        if: always() && !cancelled()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            .native-linker-work/target
+          key: ${{ steps.linker-cache.outputs.cache-primary-key }}
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linker-evidence-${{ matrix.target }}
+          path: |
+            native-linker-output/*.log
+            native-linker-output/manifest.json
+          if-no-files-found: warn
+      - name: Upload native linker and guest probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linker-${{ matrix.target }}
+          path: |
+            native-linker-output/native-linker.tar.xz
+            native-linker-output/native-linker.tar.xz.sha256
+            native-linker-output/manifest.json
+          if-no-files-found: error
+          compression-level: 0
