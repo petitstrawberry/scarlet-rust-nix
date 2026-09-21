@@ -1,9 +1,8 @@
 name: Build Scarlet Native Linker
 
 on:
-  push:
-    branches: [feat/native-scarlet-linker]
-    paths: ['native-linker/**', 'scripts/*native-linker*', '.github/workflows/native-linker.yml']
+  # PR updates run once. Also running on push produces duplicate cancelled checks
+  # for the same commit and can hold the concurrency slot for several minutes.
   pull_request:
     paths: ['native-linker/**', 'scripts/*native-linker*', '.github/workflows/native-linker.yml']
   workflow_dispatch:
