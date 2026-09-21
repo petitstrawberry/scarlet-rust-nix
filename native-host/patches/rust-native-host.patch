@@ -1060,3 +1060,15 @@ index 00000000000..0e59efefa0b
 +
 +if __name__ == "__main__":
 +    main()
+diff --git a/compiler/rustc_span/Cargo.toml b/compiler/rustc_span/Cargo.toml
+index 7889e533153..b4c8c107b81 100644
+--- a/compiler/rustc_span/Cargo.toml
++++ b/compiler/rustc_span/Cargo.toml
+@@ -23,3 +23,7 @@ sha2 = "0.10.1"
+ tracing = "0.1"
+ unicode-width = "0.2.2"
+ # tidy-alphabetical-end
++
++[target.'cfg(target_os = "scarlet")'.dependencies]
++# Scarlet has no C libc headers for blake3's optional AArch64 NEON backend.
++blake3 = { version = "1.5.2", features = ["pure"] }
