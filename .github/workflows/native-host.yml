@@ -45,6 +45,8 @@ jobs:
       NATIVE_BACKEND: ${{ inputs.backend || 'cranelift' }}
       NATIVE_WORK: ${{ github.workspace }}/.native-host-work
       NATIVE_OUTPUT: ${{ github.workspace }}/native-host-output
+      CACHIX_CACHE_NAME: ${{ vars.CACHIX_CACHE_NAME }}
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,6 +92,15 @@ jobs:
             accept-flake-config = true
             extra-substituters = https://scarlet-rust-toolchain.cachix.org
             extra-trusted-public-keys = scarlet-rust-toolchain.cachix.org-1:p+coBExi0nNTIvWF/oM9H9/1/GhwFtqGZ2Vs+4pYl6o=
+
+      # The unchanged Rust source and vendored dependencies otherwise take
+      # several minutes to fetch/materialize on every portability-fix attempt.
+      # Reuse this repository's existing content-addressed build cache.
+      - uses: cachix/cachix-action@v17
+        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          name: ${{ env.CACHIX_CACHE_NAME }}
+          authToken: ${{ env.CACHIX_AUTH_TOKEN }}
 
       - name: Restore this branch's bootstrap intermediates
         uses: actions/cache/restore@v4
