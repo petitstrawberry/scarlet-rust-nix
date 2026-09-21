@@ -6,3 +6,4 @@ __pycache__/
 /.native-host-work/
 
 /native-host-output/
+/native-toolchain-output/

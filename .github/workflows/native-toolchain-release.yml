@@ -1,0 +1,163 @@
+name: Package Scarlet Native Rust Toolchain
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example v0.1.0
+        required: true
+        type: string
+      scarlet_commit:
+        description: Full Scarlet commit that provides the required scarlet-ld ABI
+        required: true
+        type: string
+      native_host_aarch64_run:
+        description: Successful native-host.yml run containing the AArch64 artifact
+        required: true
+        type: string
+      native_host_riscv64_run:
+        description: Successful native-host.yml run containing the RV64 artifact
+        required: true
+        type: string
+      native_linker_run:
+        description: Successful native-linker.yml run containing both Wild artifacts
+        required: true
+        type: string
+      publish:
+        description: Create a draft GitHub Release after both packages succeed
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: native-toolchain-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-scarlet
+            arch: aarch64
+          - target: riscv64gc-unknown-scarlet
+            arch: riscv64
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HOST_RUN: ${{ matrix.arch == 'aarch64' && inputs.native_host_aarch64_run || inputs.native_host_riscv64_run }}
+      LINKER_RUN: ${{ inputs.native_linker_run }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate release inputs and packaging code
+        env:
+          VERSION: ${{ inputs.version }}
+          SCARLET_COMMIT: ${{ inputs.scarlet_commit }}
+          PUBLISH: ${{ inputs.publish }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          if not re.fullmatch(r'v[0-9A-Za-z][0-9A-Za-z._+-]*', os.environ['VERSION']):
+              raise SystemExit('version must be a release-safe value beginning with v')
+          if not re.fullmatch(r'[0-9a-f]{40}', os.environ['SCARLET_COMMIT']):
+              raise SystemExit('scarlet_commit must be a full lowercase Git SHA')
+          for name in ('HOST_RUN', 'LINKER_RUN'):
+              if not re.fullmatch(r'[1-9][0-9]*', os.environ[name]):
+                  raise SystemExit(f'{name} must be a GitHub Actions run ID')
+          if os.environ['PUBLISH'] == 'true' and os.environ['WORKFLOW_REF'] != 'refs/heads/main':
+              raise SystemExit('draft releases may only be created from main')
+          PY
+          bash -n scripts/fetch-native-host.sh scripts/fetch-native-linker.sh \
+            scripts/build-native-toolchain-release.sh
+          python3 -m unittest scripts/test_native_toolchain_package.py -v
+
+      - name: Install deterministic archive compressor
+        run: |
+          if ! command -v zstd >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --yes zstd
+          fi
+
+      - name: Download validated compiler and Wild artifacts
+        run: |
+          scripts/fetch-native-host.sh "$HOST_RUN" '${{ matrix.target }}' native-host
+          scripts/fetch-native-linker.sh "$LINKER_RUN" '${{ matrix.target }}' native-linker
+
+      - name: Build deterministic release candidate
+        run: |
+          scripts/build-native-toolchain-release.sh \
+            --native-host native-host \
+            --native-linker native-linker \
+            --target '${{ matrix.target }}' \
+            --version '${{ inputs.version }}' \
+            --scarlet-commit '${{ inputs.scarlet_commit }}' \
+            --output release-assets
+
+      - name: Verify release inventory
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path('release-assets')
+          stem = f"native-rust-{os.environ['ARCH']}-{os.environ['VERSION']}"
+          expected = {
+              stem + '.tar.zst',
+              stem + '.tar.zst.sha256',
+              stem + '.manifest.json',
+              f"manifest-native-rust-{os.environ['ARCH']}.toml",
+          }
+          actual = {path.name for path in root.iterdir() if path.is_file()}
+          if actual != expected:
+              raise SystemExit(f'release inventory mismatch: {sorted(actual)}')
+          manifest = json.loads((root / (stem + '.manifest.json')).read_text())
+          if manifest['components']['scarlet_ld']['included'] is not False:
+              raise SystemExit('scarlet-ld ownership boundary was lost')
+          if manifest['capabilities']['guest_verified'] is not False:
+              raise SystemExit('unverified Actions inputs must remain unverified')
+          PY
+
+      - name: Upload release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-toolchain-release-${{ matrix.arch }}
+          path: release-assets/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  release:
+    name: Create draft release
+    needs: package
+    if: success() && inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-toolchain-release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: Scarlet native Rust ${{ inputs.version }}
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: release-assets/*
