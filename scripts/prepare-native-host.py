@@ -18,9 +18,16 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def apply_patch(source, patch):
-    for options in (["--check"], []):
-        subprocess.run(["git", "apply", *options, str(patch)], cwd=source, check=True)
+def apply_patch(source, patch, *, check_only=False):
+    # Vendored trees live below the packaging checkout in Actions. Without this
+    # boundary Git discovers that parent repository and silently skips patches
+    # whose paths are outside the current repository-relative subdirectory.
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    environment["GIT_CEILING_DIRECTORIES"] = str(source.resolve().parent)
+    for options in ([["--check"]] if check_only else [["--check"], []]):
+        subprocess.run(["git", "apply", *options, str(patch)], cwd=source,
+                       env=environment, check=True)
 
 
 def find_package(vendor, name, version):
@@ -55,7 +62,7 @@ def prepare(source, inputs, cargo=None):
         package["source"] = find_package(source / "vendor", package["name"], package["version"])
     # Check source patch applicability before creating any local dependency copies.
     source_patch = inputs / "patches/rust-native-host.patch"
-    subprocess.run(["git", "apply", "--check", str(source_patch)], cwd=source, check=True)
+    apply_patch(source, source_patch, check_only=True)
     for package in recipe["packages"]:
         destination = source / "native-host-deps" / f'{package["name"]}-{package["version"]}'
         shutil.copytree(package["source"], destination, ignore=shutil.ignore_patterns(".git", ".cargo-checksum.json", ".cargo-ok", ".cargo_vcs_info.json"))
