@@ -74,6 +74,8 @@ for name in SCARLET_BOOTSTRAP SCARLET_VENDORED_SOURCE SCARLET_LLVM_CONFIG SCARLE
         exit 2
     fi
 done
+# Check build-host LLVM's system libraries before starting the long bootstrap.
+python3 "$repo_root/scripts/check-native-host-llvm.py" 2>&1 | tee "$output_dir/host-llvm.log"
 # Refuse to remove a caller's existing directory; this marker identifies our source copy.
 if [[ ( -d "$work_dir/source" || -d "$work_dir/prepared-source" ) && ! -f "$work_dir/.scarlet-native-host-work" ]]; then
     echo "Existing unowned source directory: $work_dir/source" >&2

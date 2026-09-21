@@ -165,6 +165,8 @@
               pkgs.pkg-config
               pkgs.zlib
               pkgs.zstd
+              # Static build-host LLVM exposes -lxml2 via --system-libs.
+              pkgs.libxml2
               pkgs.openssl
             ];
             SCARLET_BOOTSTRAP = packages.scarlet-bootstrap-rust;

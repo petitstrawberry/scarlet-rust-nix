@@ -27,6 +27,11 @@ build-host compiler uses cached LLVM; the Scarlet compiler defaults to Cranelift
 The optional dummy backend is only a frontend diagnostic and cannot generate
 code. The download helper rejects dummy artifacts.
 
+Before bootstrap, a tiny build-host LLVM client is linked and executed using
+`llvm-config --link-static --system-libs`. This checks that the Nix shell exposes
+LLVM's system dependencies (including libxml2) before compiling rustc. Its result
+is saved in `host-llvm.log` alongside the other build evidence.
+
 A successful Actions artifact proves cross-build and ELF identity only. Native
 startup, Rust code generation, assembly/linker integration, and executing the
 compiled program still require Scarlet guest evidence. In particular, Cranelift
