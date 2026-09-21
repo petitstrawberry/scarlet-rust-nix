@@ -242,10 +242,24 @@ index 89750f3..90d5b91 100644
  }
 
 diff --git a/libwild/src/timing.rs b/libwild/src/timing.rs
-index 5b7d4f9..b268c99 100644
+index 5b7d4f9..d2b578e 100644
 --- a/libwild/src/timing.rs
 +++ b/libwild/src/timing.rs
-@@ -18,6 +18,7 @@ const PERFETTO_ENV_VAR: &str = "WILD_PERFETTO_OUT";
+@@ -4,11 +4,13 @@ use crate::args::CounterKind;
+ use crate::error::AlreadyInitialised;
+ use crate::error::Result;
+ use crate::perf::CounterList;
++#[cfg(feature = "perfetto")]
+ use anyhow::Context;
+ use anyhow::anyhow;
+ use crossbeam_queue::ArrayQueue;
+ use std::fmt::Display;
+ use std::path::PathBuf;
++#[cfg(feature = "perfetto")]
+ use std::sync::Mutex;
+ use std::time::Duration;
+ use std::time::Instant;
+@@ -18,6 +20,7 @@ const PERFETTO_ENV_VAR: &str = "WILD_PERFETTO_OUT";
 
  pub fn setup() -> Result {
      if perfetto_output_file().is_some() {
@@ -253,16 +267,24 @@ index 5b7d4f9..b268c99 100644
          perfetto_recorder::start().map_err(
              |_: perfetto_recorder::TracingDisabledAtBuildTime| {
                  anyhow!(
-@@ -25,15 +26,21 @@ pub fn setup() -> Result {
+@@ -25,15 +28,29 @@ pub fn setup() -> Result {
                  )
              },
          )?;
 +        #[cfg(not(feature = "perfetto"))]
-+        return Err(anyhow!("{PERFETTO_ENV_VAR} requires --features perfetto"));
++        return Err(anyhow!("{PERFETTO_ENV_VAR} requires --features perfetto").into());
      }
      Ok(())
  }
 
++#[cfg(not(feature = "perfetto"))]
++pub struct DisabledTraceGuard;
++
++#[cfg(not(feature = "perfetto"))]
++impl Drop for DisabledTraceGuard {
++    fn drop(&mut self) {}
++}
++
  #[macro_export]
  macro_rules! timing_guard {
 -    ($($args:tt)*) => {
@@ -272,13 +294,13 @@ index 5b7d4f9..b268c99 100644
 +        #[cfg(feature = "perfetto")]
 +        let perfetto = perfetto_recorder::start_span!($($args)*);
 +        #[cfg(not(feature = "perfetto"))]
-+        let perfetto = ();
++        let perfetto = $crate::timing::DisabledTraceGuard;
 +        (tracing::info_span!($($args)*).entered(), perfetto)
 +    }};
  }
 
  #[macro_export]
-@@ -48,6 +55,7 @@ macro_rules! timing_phase {
+@@ -48,6 +65,7 @@ macro_rules! timing_phase {
  #[macro_export]
  macro_rules! verbose_timing_phase {
      ($($args:tt)*) => {
@@ -286,7 +308,7 @@ index 5b7d4f9..b268c99 100644
          perfetto_recorder::scope!($($args)*);
      };
  }
-@@ -280,6 +288,12 @@ fn perfetto_output_file() -> Option<PathBuf> {
+@@ -280,6 +298,12 @@ fn perfetto_output_file() -> Option<PathBuf> {
      std::env::var(PERFETTO_ENV_VAR).ok().map(PathBuf::from)
  }
 

@@ -34,13 +34,15 @@ jobs:
             accept-flake-config = true
             extra-substituters = https://scarlet-rust-toolchain.cachix.org
             extra-trusted-public-keys = scarlet-rust-toolchain.cachix.org-1:p+coBExi0nNTIvWF/oM9H9/1/GhwFtqGZ2Vs+4pYl6o=
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: linker-cache
         with:
           path: |
             ~/.cargo/registry
             .native-linker-work/target
-          key: native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/wild-scarlet.patch') }}
+          key: native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/wild-scarlet.patch') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/wild-scarlet.patch') }}-
             native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-
       - name: Get prebuilt cross compiler and LLVM tools
         run: nix build .#scarlet-rust-toolchain .#scarlet-clang .#scarlet-llvm .#scarlet-lld --no-link --max-jobs 0 --accept-flake-config
@@ -49,6 +51,15 @@ jobs:
           bash -n scripts/build-native-linker.sh
           nix develop --impure --expr 'import ./native-linker/shell.nix { flake = builtins.getFlake (toString ./.); }' \
             --accept-flake-config --command bash scripts/build-native-linker.sh '${{ matrix.target }}'
+      - name: Save partial compiler work
+        if: always() && !cancelled()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            .native-linker-work/target
+          key: ${{ steps.linker-cache.outputs.cache-primary-key }}
       - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@v4
