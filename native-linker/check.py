@@ -67,7 +67,7 @@ def main():
                        SCARLET_HOST_WILD=str(args.linker.resolve()))
     subprocess.run([str(Path(os.environ["SCARLET_TOOLCHAIN"]) / "bin/rustc"),
                     "--edition=2024", "--target", args.target, "--crate-name=linker_hello",
-                    "-Cpanic=abort", "-Copt-level=1", "-Clinker-flavor=gnu-lld",
+                    "-Cpanic=abort", "-Copt-level=1", "-Clinker-flavor=ld.lld",
                     "-Clinker=" + str(Path(__file__).with_name("capture-rust-link.py").resolve()),
                     "-Clink-arg=-z", "-Clink-arg=max-page-size=4096",
                     str(source / "hello.rs"), "-o", str(rust_output)], env=environment, check=True)
