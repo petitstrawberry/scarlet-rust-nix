@@ -1072,89 +1072,59 @@ index 7889e533153..b4c8c107b81 100644
 +[target.'cfg(target_os = "scarlet")'.dependencies]
 +# Scarlet has no C libc headers for blake3's optional AArch64 NEON backend.
 +blake3 = { version = "1.5.2", features = ["pure"] }
-diff --git a/compiler/rustc_interface/src/util.rs b/compiler/rustc_interface/src/util.rs
-index 7e9c1356616..a490262126d 100644
---- a/compiler/rustc_interface/src/util.rs
-+++ b/compiler/rustc_interface/src/util.rs
-@@ -143,32 +143,51 @@ fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send, R:
- ) -> R {
--    // The "thread pool" is a single spawned thread in the non-parallel
--    // compiler. We run on a spawned thread instead of the main thread (a) to
--    // provide control over the stack size, and (b) to increase similarity with
--    // the parallel compiler, in particular to ensure there is no accidental
--    // sharing of data between the main thread and the compilation thread
--    // (which might cause problems for the parallel compiler).
--    let builder = thread::Builder::new().name("rustc".to_string()).stack_size(thread_stack_size);
--
--    // We build the session globals and run `f` on the spawned thread, because
--    // `SessionGlobals` does not impl `Send` in the non-parallel compiler.
--    thread::scope(|s| {
--        // `unwrap` is ok here because `spawn_scoped` only panics if the thread
--        // name contains null bytes.
--        let r = builder
--            .spawn_scoped(s, move || {
--                rustc_span::create_session_globals_then(
--                    edition,
--                    extra_symbols,
--                    Some(sm_inputs),
--                    || f(CurrentGcx::new(), Proxy::new()),
--                )
--            })
--            .unwrap()
--            .join();
-+    // Scarlet's compiler bring-up currently supports native threads, but the
-+    // compiler's scoped wrapper thread does not make progress once session
-+    // globals are installed. The initial process stack is already sized for
-+    // rustc, so run the single-threaded compiler session there.
-+    #[cfg(target_os = "scarlet")]
-+    {
-+        let _ = thread_stack_size;
-+        return rustc_span::create_session_globals_then(
-+            edition,
-+            extra_symbols,
-+            Some(sm_inputs),
-+            || f(CurrentGcx::new(), Proxy::new()),
-+        );
-+    }
+diff --git a/library/std/src/sys/thread/scarlet.rs b/library/std/src/sys/thread/scarlet.rs
+index 3f88d18aa0b..36b8b90afec 100644
+--- a/library/std/src/sys/thread/scarlet.rs
++++ b/library/std/src/sys/thread/scarlet.rs
+@@ -4,2 +4,3 @@
+ use crate::sys::pal::abi;
++use crate::sys::thread_local::key::{TLS_CLEANUP_OFFSET, TLS_MAPPING_SIZE};
+ use crate::thread::ThreadInit;
+@@ -10,4 +11,2 @@
+ const STACK_ALIGN: usize = 16;
+-const TLS_MAPPING_SIZE: usize = PAGE_SIZE;
+-const TLS_CLEANUP_OFFSET: usize = 2048;
+ const THREAD_CLEANUP_MAGIC: u64 = 0x5343_5448_5244_0001;
+@@ -26,2 +25,7 @@ struct ThreadCleanupRecord {
 -
 +
--        match r {
--            Ok(v) => v,
--            Err(e) => std::panic::resume_unwind(e),
--        }
--    })
-+    #[cfg(not(target_os = "scarlet"))]
-+    {
-+        // The "thread pool" is a single spawned thread in the non-parallel
-+        // compiler. We run on a spawned thread instead of the main thread (a) to
-+        // provide control over the stack size, and (b) to increase similarity with
-+        // the parallel compiler, in particular to ensure there is no accidental
-+        // sharing of data between the main thread and the compilation thread
-+        // (which might cause problems for the parallel compiler).
-+        let builder =
-+            thread::Builder::new().name("rustc".to_string()).stack_size(thread_stack_size);
++const _: () = assert!(
++    TLS_CLEANUP_OFFSET + crate::mem::size_of::<ThreadCleanupRecord>() <= TLS_MAPPING_SIZE,
++    "Scarlet thread cleanup record overlaps its TLS key table",
++);
 +
-+        // We build the session globals and run `f` on the spawned thread, because
-+        // `SessionGlobals` does not impl `Send` in the non-parallel compiler.
-+        thread::scope(|s| {
-+            // `unwrap` is ok here because `spawn_scoped` only panics if the thread
-+            // name contains null bytes.
-+            let r = builder
-+                .spawn_scoped(s, move || {
-+                    rustc_span::create_session_globals_then(
-+                        edition,
-+                        extra_symbols,
-+                        Some(sm_inputs),
-+                        || f(CurrentGcx::new(), Proxy::new()),
-+                    )
-+                })
-+                .unwrap()
-+                .join();
-+
-+            match r {
-+                Ok(v) => v,
-+                Err(e) => std::panic::resume_unwind(e),
-+            }
-+        })
-+    }
- }
+ struct ThreadStart {
+diff --git a/library/std/src/sys/thread_local/key/scarlet.rs b/library/std/src/sys/thread_local/key/scarlet.rs
+index e60f2c5ebd8..4db6f377cc1 100644
+--- a/library/std/src/sys/thread_local/key/scarlet.rs
++++ b/library/std/src/sys/thread_local/key/scarlet.rs
+@@ -7,4 +7,9 @@
+ const PAGE_SIZE: usize = 4096;
+-const TLS_KEY_COUNT: usize = 128;
+ const POINTER_SIZE: usize = mem::size_of::<usize>();
++// Scarlet does not have native ELF TLS yet, so every Rust `thread_local!`
++// consumes one runtime key. rustc alone exceeds the POSIX-minimum 128 keys.
++const TLS_KEY_COUNT: usize = 1024;
++// Spawned threads keep their cleanup record after the complete key table.
++pub(crate) const TLS_CLEANUP_OFFSET: usize = TLS_KEY_COUNT * POINTER_SIZE;
++pub(crate) const TLS_MAPPING_SIZE: usize = TLS_CLEANUP_OFFSET + PAGE_SIZE;
+ const DTOR_ROUNDS: usize = 4;
+@@ -95,3 +100,3 @@ fn main_tls_base() -> usize {
+         0,
+-        PAGE_SIZE,
++        TLS_MAPPING_SIZE,
+         abi::mmap::PROT_READ | abi::mmap::PROT_WRITE,
+@@ -105,3 +110,3 @@ fn main_tls_base() -> usize {
+         Err(existing) => {
+-            let _ = abi::memory_unmap(new_base, PAGE_SIZE);
++            let _ = abi::memory_unmap(new_base, TLS_MAPPING_SIZE);
+             existing
+diff --git a/library/std/src/sys/thread_local/mod.rs b/library/std/src/sys/thread_local/mod.rs
+index d602f2259a8..320af615c4f 100644
+--- a/library/std/src/sys/thread_local/mod.rs
++++ b/library/std/src/sys/thread_local/mod.rs
+@@ -201,3 +201,3 @@ pub(crate) mod key {
+             pub(super) use racy::LazyKey;
+-            pub(crate) use scarlet::run_dtors;
++            pub(crate) use scarlet::{TLS_CLEANUP_OFFSET, TLS_MAPPING_SIZE, run_dtors};
+             pub(super) use scarlet::{Key, get, set};
