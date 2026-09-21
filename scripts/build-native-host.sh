@@ -141,12 +141,16 @@ if not (sysroot / 'bin/rustc').is_file() or not list(std.glob('libstd-*.rlib')):
 package = out / 'sysroot'
 if package.exists():
     shutil.rmtree(package)
-# The bootstrap sysroot contains a rustc-src link back into the complete Rust
-# checkout. Following it would make the compiler artifact include source-only
-# test fixtures, including foreign-architecture ELF samples from gcc/libgo.
-# Native rustc does not need that component at runtime; package only executable
-# sysroot content and the matching target libraries copied below.
-shutil.copytree(sysroot, package, symlinks=False, ignore=shutil.ignore_patterns('rustc-src'))
+# Bootstrap uses both `rustlib/src` and `rustlib/rustc-src` layouts for links
+# back into the complete Rust checkout. Following either one would include
+# source-only test fixtures, including foreign-architecture ELF samples from
+# gcc/libgo. Native rustc does not need those components at runtime.
+def runtime_sysroot_ignores(directory, names):
+    if pathlib.Path(directory) == sysroot / 'lib/rustlib':
+        return {'src', 'rustc-src'}.intersection(names)
+    return set()
+
+shutil.copytree(sysroot, package, symlinks=False, ignore=runtime_sysroot_ignores)
 stdlib = package / 'lib/rustlib' / target / 'lib'
 shutil.copytree(std, stdlib, dirs_exist_ok=True, symlinks=False)
 if not list((package / 'lib').glob('librustc_driver*.so')):

@@ -29,9 +29,10 @@ provide. Build-host targets retain their normal blake3 features.
 build-host compiler uses cached LLVM; the Scarlet compiler defaults to Cranelift.
 The optional dummy backend is only a frontend diagnostic and cannot generate
 code. The download helper rejects dummy artifacts. Native compiler artifacts
-omit the bootstrap sysroot's `rustc-src` link: it is not needed to run rustc and
-would otherwise copy the full checkout, including foreign-architecture ELF test
-fixtures, into the runtime artifact.
+omit the bootstrap sysroot's `rustlib/src` and `rustlib/rustc-src` source
+components: they are not needed to run rustc and would otherwise copy the full
+checkout, including foreign-architecture ELF test fixtures, into the runtime
+artifact.
 
 Before bootstrap, a tiny build-host LLVM client is linked and executed using
 `llvm-config --link-static --system-libs`. This checks that the Nix shell exposes
