@@ -92,14 +92,16 @@ jobs:
 
       - name: Download validated compiler and Wild artifacts
         run: |
-          scripts/fetch-native-host.sh "$HOST_RUN" '${{ matrix.target }}' native-host
-          scripts/fetch-native-linker.sh "$LINKER_RUN" '${{ matrix.target }}' native-linker
+          scripts/fetch-native-host.sh "$HOST_RUN" '${{ matrix.target }}' \
+            "$RUNNER_TEMP/native-host-artifact"
+          scripts/fetch-native-linker.sh "$LINKER_RUN" '${{ matrix.target }}' \
+            "$RUNNER_TEMP/native-linker-artifact"
 
       - name: Build deterministic release candidate
         run: |
           scripts/build-native-toolchain-release.sh \
-            --native-host native-host \
-            --native-linker native-linker \
+            --native-host "$RUNNER_TEMP/native-host-artifact" \
+            --native-linker "$RUNNER_TEMP/native-linker-artifact" \
             --target '${{ matrix.target }}' \
             --version '${{ inputs.version }}' \
             --scarlet-commit '${{ inputs.scarlet_commit }}' \
