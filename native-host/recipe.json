@@ -1,0 +1,85 @@
+{
+  "base_rust_revision": "39c689a4859b9d8ee1828720135defd125c03d31",
+  "packages": [
+    {
+      "name": "libloading",
+      "version": "0.8.9",
+      "root_patch": "libloading_08",
+      "operations": [
+        {
+          "kind": "patch",
+          "input": "patches/libloading-0.8.9-scarlet.patch"
+        },
+        {
+          "kind": "copy",
+          "input": "files/libloading_scarlet.rs",
+          "destination": "src/scarlet.rs"
+        }
+      ]
+    },
+    {
+      "name": "libloading",
+      "version": "0.9.0",
+      "root_patch": "libloading_09",
+      "operations": [
+        {
+          "kind": "patch",
+          "input": "patches/libloading-0.9.0-scarlet.patch"
+        },
+        {
+          "kind": "copy",
+          "input": "files/libloading_scarlet.rs",
+          "destination": "src/scarlet.rs"
+        },
+        {
+          "kind": "patch",
+          "input": "patches/libloading-0.9.0-adapter.patch"
+        }
+      ]
+    },
+    {
+      "name": "stacker",
+      "version": "0.1.21",
+      "root_patch": "stacker",
+      "operations": [
+        {
+          "kind": "patch",
+          "input": "patches/stacker-0.1.21-scarlet.patch"
+        }
+      ]
+    },
+    {
+      "name": "target-lexicon",
+      "version": "0.13.3",
+      "root_patch": null,
+      "operations": [
+        {
+          "kind": "patch",
+          "input": "patches/target-lexicon-0.13.3-scarlet.patch"
+        }
+      ]
+    },
+    {
+      "name": "tempfile",
+      "version": "3.23.0",
+      "root_patch": "tempfile",
+      "operations": [
+        {
+          "kind": "patch",
+          "input": "patches/tempfile-3.23.0-scarlet.patch"
+        }
+      ]
+    },
+    {
+      "name": "getrandom",
+      "version": "0.3.3",
+      "root_patch": "getrandom",
+      "operations": [
+        {
+          "kind": "patch",
+          "input": "patches/getrandom-0.3.3-scarlet.patch"
+        }
+      ]
+    }
+  ]
+}

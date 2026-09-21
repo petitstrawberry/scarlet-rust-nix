@@ -1,0 +1,176 @@
+name: Build Scarlet Native Host
+
+on:
+  # PR updates run once; push+PR otherwise starts and cancels the same bootstrap.
+  pull_request:
+    paths:
+      - .github/workflows/native-host.yml
+      - flake.nix
+      - flake.lock
+      - nix/vendor-rust-src.nix
+      - native-host/**
+      - scripts/*native*host*
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Scarlet machine that will run the compiler
+        type: choice
+        default: aarch64-unknown-scarlet
+        options:
+          - aarch64-unknown-scarlet
+          - riscv64gc-unknown-scarlet
+      backend:
+        description: Native code generator (dummy is frontend diagnostics only)
+        type: choice
+        default: cranelift
+        options:
+          - cranelift
+          - dummy
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new PR revision replaces only that branch's previous expensive build.
+  group: native-host-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ inputs.target || 'aarch64-unknown-scarlet' }}-${{ inputs.backend || 'cranelift' }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Native ${{ inputs.target || 'aarch64-unknown-scarlet' }} (${{ inputs.backend || 'cranelift' }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      NATIVE_TARGET: ${{ inputs.target || 'aarch64-unknown-scarlet' }}
+      NATIVE_BACKEND: ${{ inputs.backend || 'cranelift' }}
+      NATIVE_WORK: ${{ github.workspace }}/.native-host-work
+      NATIVE_OUTPUT: ${{ github.workspace }}/native-host-output
+      CACHIX_CACHE_NAME: ${{ vars.CACHIX_CACHE_NAME }}
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Initialize evidence and cache identity
+        id: identity
+        env:
+          CACHE_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          CACHE_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+        run: |
+          mkdir -p "$NATIVE_OUTPUT"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          scope = hashlib.sha256((os.environ['CACHE_REPO'] + ':' + os.environ['CACHE_REF']).encode()).hexdigest()[:20]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('scope=' + scope + '\n')
+          manifest = {'schema': 1, 'status': 'environment-not-ready', 'native_host': os.environ['NATIVE_TARGET'], 'backend': os.environ['NATIVE_BACKEND'], 'guest_verified': False,
+                      'packaging_commit': os.environ['GITHUB_SHA'], 'github_run_id': os.environ['GITHUB_RUN_ID']}
+          pathlib.Path(os.environ['NATIVE_OUTPUT'], 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+
+      - name: Check native artifact scripts
+        run: |
+          bash -n scripts/build-native-host.sh scripts/fetch-native-host.sh
+          python3 -m unittest discover -s scripts -p 'test_native*.py'
+
+      - name: Free runner disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            extra-substituters = https://scarlet-rust-toolchain.cachix.org
+            extra-trusted-public-keys = scarlet-rust-toolchain.cachix.org-1:p+coBExi0nNTIvWF/oM9H9/1/GhwFtqGZ2Vs+4pYl6o=
+
+      # The unchanged Rust source and vendored dependencies otherwise take
+      # several minutes to fetch/materialize on every portability-fix attempt.
+      # Reuse this repository's existing content-addressed build cache.
+      - uses: cachix/cachix-action@v17
+        if: env.CACHIX_CACHE_NAME != '' && env.CACHIX_AUTH_TOKEN != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          name: ${{ env.CACHIX_CACHE_NAME }}
+          authToken: ${{ env.CACHIX_AUTH_TOKEN }}
+
+      - name: Restore this branch's bootstrap intermediates
+        uses: actions/cache/restore@v4
+        id: bootstrap-cache
+        with:
+          path: |
+            .native-host-work/.scarlet-native-host-work
+            .native-host-work/source
+            !.native-host-work/source/vendor
+            .native-host-work/build
+            .native-host-work/cargo-home
+          key: native-host-v1-${{ runner.os }}-${{ env.NATIVE_TARGET }}-${{ env.NATIVE_BACKEND }}-${{ steps.identity.outputs.scope }}-${{ hashFiles('flake.lock', 'nix/vendor-rust-src.nix') }}-${{ hashFiles('native-host/**', 'scripts/*native-host*', 'flake.nix') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            native-host-v1-${{ runner.os }}-${{ env.NATIVE_TARGET }}-${{ env.NATIVE_BACKEND }}-${{ steps.identity.outputs.scope }}-${{ hashFiles('flake.lock', 'nix/vendor-rust-src.nix') }}-${{ hashFiles('native-host/**', 'scripts/*native-host*', 'flake.nix') }}-
+            native-host-v1-${{ runner.os }}-${{ env.NATIVE_TARGET }}-${{ env.NATIVE_BACKEND }}-${{ steps.identity.outputs.scope }}-${{ hashFiles('flake.lock', 'nix/vendor-rust-src.nix') }}-
+
+      - name: Cross-build Scarlet native compiler using prebuilt LLVM
+        id: native-build
+        run: |
+          set -o pipefail
+          # Refuse an LLVM/Clang source build if binary substitution is missing.
+          nix build .#scarlet-llvm .#scarlet-lld .#scarlet-clang --no-link \
+            --max-jobs 0 --accept-flake-config 2>&1 | tee "$NATIVE_OUTPUT/environment.log"
+          nix develop .#native-host --accept-flake-config --command \
+            scripts/build-native-host.sh --target "$NATIVE_TARGET" --backend "$NATIVE_BACKEND" \
+            --work-dir "$NATIVE_WORK" --output "$NATIVE_OUTPUT" \
+            2>&1 | tee "$NATIVE_OUTPUT/action.log"
+
+      # Keep partial compiler work after a compile failure too. No default-branch
+      # cache or external toolchain directory is ever used as a writable sysroot.
+      - name: Omit the reproducible vendor tree from the source cache
+        if: always() && !cancelled() && hashFiles('.native-host-work/.scarlet-native-host-work') != ''
+        run: rm -rf "$NATIVE_WORK/source/vendor"
+
+      - name: Save completed bootstrap work for the next attempt
+        if: always() && !cancelled() && hashFiles('.native-host-work/.scarlet-native-host-work') != ''
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .native-host-work/.scarlet-native-host-work
+            .native-host-work/source
+            !.native-host-work/source/vendor
+            .native-host-work/build
+            .native-host-work/cargo-home
+          key: ${{ steps.bootstrap-cache.outputs.cache-primary-key }}
+
+      - name: Upload build evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-host-evidence-${{ env.NATIVE_TARGET }}
+          path: |
+            native-host-output/*.json
+            native-host-output/*.toml
+            native-host-output/*.log
+            native-host-output/*.sh
+            native-host-output/recipe/**
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload validated native sysroot
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-host-${{ env.NATIVE_TARGET }}
+          path: |
+            native-host-output/native-host.tar.xz
+            native-host-output/native-host.tar.xz.sha256
+            native-host-output/manifest.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
