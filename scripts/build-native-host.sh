@@ -94,6 +94,10 @@ python3 "$repo_root/scripts/prepare-native-host.py" --source "$work_dir/prepared
 python3 "$repo_root/scripts/check-native-host-allocator.py" \
     "$work_dir/prepared-source/library/std/src/sys/alloc/scarlet.rs" \
     --rustc "$SCARLET_BOOTSTRAP/bin/rustc" 2>&1 | tee "$output_dir/allocator-regression.log"
+# The fixed errno slot is part of the native loader/std ABI. Require the real
+# TLS helper behavior to pass on the build host before cross bootstrap.
+RUSTC="$SCARLET_BOOTSTRAP/bin/rustc" python3 "$repo_root/scripts/test_native_host_errno.py" \
+    2>&1 | tee "$output_dir/errno-regression.log"
 # Do not restore source mtimes on equal content: Cargo must reuse unchanged
 # patched files, and must notice changed patches. Vendor files are read-only
 # baseline data from Nix, excluded from the Actions cache to save space.

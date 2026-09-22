@@ -41,7 +41,35 @@ interpreting each other's key 1 (or later keys) as different Rust types. Native
 thread exit runs destructors from all namespaces and frees their tables. Initial
 threads publish their table through the architecture's thread pointer too.
 Libraries remain pinned until process exit, as required by the existing loader.
-Rebuild the complete native toolchain when adopting this runtime change.
+
+The native thread mapping starts with the shared `#[repr(C)] NativeTlsHeader`:
+`namespace_head: usize`, `magic: u32` (`0x53435401`), and `errno: i32`. The fixed
+errno slot is shared by the loader, every statically linked std, and the C libc;
+it does not consume a Rust TLS key or belong to a std namespace. The namespace
+head and native thread cleanup record retain their existing offsets. This is
+a coordinated ABI change: rebuild and deploy matching loader, std, and C libc
+artifacts together, including Rust DSOs and proc macros.
+
+Native startup establishes the thread mapping before environment initialization
+and constructors, and initializes child mappings before cloning a thread. Loader
+and executable startup on the same thread preserve an existing valid header.
+Rust std retains its Rust runtime backend and reads errno directly from the
+shared slot. The native errno accessor validates the header without allocating
+or lazily creating TLS. These properties do not establish async-signal-safety
+for the runtime or C library; guest startup and thread tests remain necessary.
+
+After source preparation and before bootstrap, the build also requires
+`scripts/test_native_host_errno.py` to pass using `$SCARLET_BOOTSTRAP/bin/rustc`.
+It compiles the committed overlay's production TLS helpers with host syscall and
+thread-pointer substitutes, then tests shared header layout, initialization,
+repeated startup, header rejection, and thread isolation. The abort intrinsic
+becomes a typed panic only in that harness. `errno-regression.log` records the
+results; a missing compiler or a failing test stops the build. Run it with
+Python 3.11+ alongside the existing preparation tests:
+
+```sh
+RUSTC=/path/to/host/rustc python3 -m unittest discover -s scripts -p 'test_*.py'
+```
 
 The std allocator overlay aligns split free blocks to their header alignment.
 Previously, an odd-sized allocation could place a `Block` at an unaligned

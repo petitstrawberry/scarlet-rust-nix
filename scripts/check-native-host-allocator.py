@@ -42,8 +42,8 @@ def main():
     ])
     regression = r'''
 #[test]
-fn odd_size_libc_request_keeps_the_next_block_aligned() {
-    // libc malloc(1) adds its 16-byte prefix to the allocation request.
+fn odd_size_request_keeps_the_next_block_aligned() {
+    // An odd-sized payload must not leave the next free Block misaligned.
     let (data, used) = placement(0x1000, 65536, 17, 16).unwrap();
     assert_eq!(data, 0x1020);
     assert_eq!((0x1000 + used) % align_of::<Block>(), 0);

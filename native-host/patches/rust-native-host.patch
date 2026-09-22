@@ -451,17 +451,95 @@ index 573f540483b..77bf1c4eaad 100644
  #[else]
  pub mod os {
 diff --git a/library/std/src/sys/pal/scarlet/os.rs b/library/std/src/sys/pal/scarlet/os.rs
-index fb348871251..c240e17a1df 100644
+index fb348871251..95f2587146b 100644
 --- a/library/std/src/sys/pal/scarlet/os.rs
 +++ b/library/std/src/sys/pal/scarlet/os.rs
-@@ -1,5 +1,5 @@
+@@ -1,110 +1,123 @@
  use super::unsupported;
 -use crate::ffi::{CString, OsStr, OsString};
 +use crate::ffi::{CStr, CString, OsStr, OsString, c_char};
  use crate::path::{self, PathBuf};
  use crate::sys::pal::abi;
  use crate::{fmt, io, iter, slice, str};
-@@ -82,9 +82,20 @@ fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+
+ const PATH_SEPARATOR: u8 = b':';
+
+ pub fn errno() -> i32 {
+-    0
++    // SAFETY: the matching Scarlet CRT initialized this thread's shared errno
++    // slot before user code; the accessor rejects absent or incompatible TLS.
++    unsafe { crate::sys::thread_local::key::native_errno_location().read() }
+ }
+
+ pub fn error_string(_errno: i32) -> String {
+     "operation successful".to_string()
+ }
+
+ pub fn getcwd() -> io::Result<PathBuf> {
+     let mut buffer = [0; 4096];
+     let len = abi::vfs_get_cwd_path(&mut buffer).map_err(|()| io::ErrorKind::Other)?;
+     let cwd = str::from_utf8(&buffer[..len]).map_err(|_| io::ErrorKind::InvalidData)?;
+     Ok(PathBuf::from(cwd))
+ }
+
+ pub fn chdir(path: &path::Path) -> io::Result<()> {
+     let path = path_to_cstring(path)?;
+     abi::vfs_change_directory(path.as_ptr().cast()).map_err(|()| io::ErrorKind::Other.into())
+ }
+
+ // This can't just be `impl Iterator` because that requires `'a` to be live on
+ // drop (see #146045).
+ pub type SplitPaths<'a> = iter::Map<
+     slice::Split<'a, u8, impl FnMut(&u8) -> bool + 'static>,
+     impl FnMut(&[u8]) -> PathBuf + 'static,
+ >;
+
+ #[define_opaque(SplitPaths)]
+ pub fn split_paths(unparsed: &OsStr) -> SplitPaths<'_> {
+     fn is_separator(&b: &u8) -> bool {
+         b == PATH_SEPARATOR
+     }
+
+     fn into_pathbuf(part: &[u8]) -> PathBuf {
+         // SAFETY: `part` is split from bytes produced by `OsStr::as_encoded_bytes`.
+         PathBuf::from(unsafe { OsStr::from_encoded_bytes_unchecked(part) })
+     }
+
+     unparsed.as_encoded_bytes().split(is_separator).map(into_pathbuf)
+ }
+
+ #[derive(Debug)]
+ pub struct JoinPathsError;
+
+ pub fn join_paths<I, T>(paths: I) -> Result<OsString, JoinPathsError>
+ where
+     I: Iterator<Item = T>,
+     T: AsRef<OsStr>,
+ {
+     let mut joined = Vec::new();
+
+     for (i, path) in paths.enumerate() {
+         let path = path.as_ref().as_encoded_bytes();
+         if i > 0 {
+             joined.push(PATH_SEPARATOR);
+         }
+         if path.contains(&PATH_SEPARATOR) {
+             return Err(JoinPathsError);
+         }
+         joined.extend_from_slice(path);
+     }
+
+     // SAFETY: `joined` is composed from `OsStr::as_encoded_bytes` segments and
+     // ASCII separators, which preserves the platform encoding invariants.
+     Ok(unsafe { OsString::from_encoded_bytes_unchecked(joined) })
+ }
+
+ impl fmt::Display for JoinPathsError {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+         write!(f, "path segment contains separator `{}`", char::from(PATH_SEPARATOR))
+     }
+ }
+
  impl crate::error::Error for JoinPathsError {}
 
  pub fn current_exe() -> io::Result<PathBuf> {
@@ -485,6 +563,26 @@ index fb348871251..c240e17a1df 100644
  }
 
  pub fn temp_dir() -> PathBuf {
+     PathBuf::from("/tmp")
+ }
+
+ pub fn home_dir() -> Option<PathBuf> {
+     crate::sys::env::getenv(OsStr::new("HOME")).map(PathBuf::from)
+ }
+
+ pub fn exit(code: i32) -> ! {
+     abi::exit_group(code);
+     crate::intrinsics::abort()
+ }
+
+ pub fn getpid() -> u32 {
+     abi::getpid().unwrap_or(0)
+ }
+
+ fn path_to_cstring(path: &path::Path) -> io::Result<CString> {
+     CString::new(path.as_os_str().as_encoded_bytes())
+         .map_err(|_| io::ErrorKind::InvalidInput.into())
+ }
 diff --git a/library/std/src/sys/path/unix.rs b/library/std/src/sys/path/unix.rs
 index 611d250db40..16cbe0d9ca9 100644
 --- a/library/std/src/sys/path/unix.rs
@@ -944,58 +1042,392 @@ index 7889e533153..b4c8c107b81 100644
 +# Scarlet has no C libc headers for blake3's optional AArch64 NEON backend.
 +blake3 = { version = "1.5.2", features = ["pure"] }
 diff --git a/library/std/src/sys/thread/scarlet.rs b/library/std/src/sys/thread/scarlet.rs
-index 3f88d18aa0b..36b8b90afec 100644
+index 3f88d18aa0b..6da51473b8f 100644
 --- a/library/std/src/sys/thread/scarlet.rs
 +++ b/library/std/src/sys/thread/scarlet.rs
-@@ -4,2 +4,3 @@
+@@ -1,286 +1,301 @@
+ use crate::ffi::CStr;
+ use crate::mem::ManuallyDrop;
+ use crate::num::NonZero;
  use crate::sys::pal::abi;
 +use crate::sys::thread_local::key::{TLS_CLEANUP_OFFSET, TLS_MAPPING_SIZE};
  use crate::thread::ThreadInit;
-@@ -10,4 +11,2 @@
+ use crate::time::Duration;
+ use crate::{cmp, io, ptr};
++use scarlet_sys::tls::NativeTlsHeader;
+
+ const PAGE_SIZE: usize = 4096;
  const STACK_ALIGN: usize = 16;
 -const TLS_MAPPING_SIZE: usize = PAGE_SIZE;
 -const TLS_CLEANUP_OFFSET: usize = 2048;
  const THREAD_CLEANUP_MAGIC: u64 = 0x5343_5448_5244_0001;
-@@ -26,2 +25,7 @@ struct ThreadCleanupRecord {
--
-+
+
+ pub const DEFAULT_MIN_STACK_SIZE: usize = 64 * 1024;
+
+ #[repr(C)]
+ #[derive(Clone, Copy)]
+ struct ThreadCleanupRecord {
+     magic: u64,
+     stack_mapping_base: usize,
+     stack_mapping_len: usize,
+     tls_mapping_base: usize,
+     tls_mapping_len: usize,
+ }
+
 +const _: () = assert!(
 +    TLS_CLEANUP_OFFSET + crate::mem::size_of::<ThreadCleanupRecord>() <= TLS_MAPPING_SIZE,
 +    "Scarlet thread cleanup record overlaps its TLS key table",
 +);
 +
  struct ThreadStart {
+     init: Box<ThreadInit>,
+     stack_mapping_base: usize,
+     stack_mapping_len: usize,
+     tls_mapping_base: usize,
+     tls_mapping_len: usize,
+ }
+
+ struct ThreadStackMapping {
+     mapping_base: usize,
+     mapping_len: usize,
+     stack_base: usize,
+     stack_len: usize,
+ }
+
+ pub struct Thread {
+     tid: u32,
+ }
+
+ unsafe impl Send for Thread {}
+ unsafe impl Sync for Thread {}
+
+ impl Thread {
+     // unsafe: see thread::Builder::spawn_unchecked for safety requirements
+     pub unsafe fn new(stack: usize, init: Box<ThreadInit>) -> io::Result<Thread> {
+         let stack = allocate_thread_stack(cmp::max(stack, DEFAULT_MIN_STACK_SIZE))?;
+         let stack_top = (stack.stack_base + stack.stack_len - 16) & !(STACK_ALIGN - 1);
+         let tls_ptr = match allocate_thread_tls() {
+             Ok(ptr) => ptr,
+             Err(err) => {
+                 let _ = abi::memory_unmap(stack.mapping_base, stack.mapping_len);
+                 return Err(err);
+             }
+         };
+         write_thread_cleanup_record(tls_ptr, stack.mapping_base, stack.mapping_len);
+
+         let start = Box::new(ThreadStart {
+             init,
+             stack_mapping_base: stack.mapping_base,
+             stack_mapping_len: stack.mapping_len,
+             tls_mapping_base: tls_ptr,
+             tls_mapping_len: TLS_MAPPING_SIZE,
+         });
+         let start_ptr = Box::into_raw(start).expose_provenance();
+
+         let flags = abi::clone_flags::THREAD
+             | abi::clone_flags::SET_TLS
+             | abi::clone_flags::VM
+             | abi::clone_flags::FS
+             | abi::clone_flags::FILES;
+
+         match abi::clone_thread(flags, stack_top, thread_start, start_ptr, tls_ptr) {
+             Ok(tid) => Ok(Thread { tid }),
+             Err(()) => {
+                 // SAFETY: the kernel did not consume `start_ptr` if clone failed.
+                 let start = unsafe {
+                     Box::from_raw(ptr::with_exposed_provenance_mut::<ThreadStart>(start_ptr))
+                 };
+                 cleanup_thread_mappings(
+                     start.stack_mapping_base,
+                     start.stack_mapping_len,
+                     start.tls_mapping_base,
+                     start.tls_mapping_len,
+                 );
+                 Err(io::ErrorKind::Other.into())
+             }
+         }
+     }
+
+     pub fn join(self) {
+         let tid = ManuallyDrop::new(self).tid;
+         let mut status = 0;
+         let pid = abi::waitpid(tid as i32, &mut status, 0).expect("failed to join Scarlet thread");
+         assert_eq!(pid, tid as i32, "joined unexpected Scarlet thread");
+     }
+ }
+
+ impl Drop for Thread {
+     fn drop(&mut self) {
+         let _ = abi::thread_detach(self.tid);
+     }
+ }
+
+ pub fn available_parallelism() -> io::Result<NonZero<usize>> {
+     // TODO(scarlet): expose the online CPU count from the kernel.
+     Ok(NonZero::<usize>::MIN)
+ }
+
+ pub fn current_os_id() -> Option<u64> {
+     // TODO(scarlet): expose a Native thread id distinct from the process id.
+     None
+ }
+
+ pub fn yield_now() {
+     let _ = abi::thread_yield();
+ }
+
+ #[allow(dead_code)]
+ pub fn set_name(_name: &CStr) {
+     // TODO(scarlet): expose a Native thread naming operation.
+ }
+
+ pub fn sleep(dur: Duration) {
+     let nanos = dur.as_nanos().min(u64::MAX as u128) as u64;
+     let _ = abi::sleep(nanos);
+ }
+
+ fn allocate_thread_stack(stack_size: usize) -> io::Result<ThreadStackMapping> {
+     let mapping_len = stack_size + PAGE_SIZE;
+     let mapping_base = abi::memory_map(
+         0,
+         0,
+         mapping_len,
+         abi::mmap::PROT_NONE,
+         abi::mmap::MAP_PRIVATE | abi::mmap::MAP_ANONYMOUS,
+         0,
+     )
+     .map_err(|()| io::ErrorKind::Other)?;
+     let stack_base = mapping_base + PAGE_SIZE;
+
+     if abi::memory_map(
+         0,
+         stack_base,
+         stack_size,
+         abi::mmap::PROT_READ | abi::mmap::PROT_WRITE,
+         abi::mmap::MAP_PRIVATE | abi::mmap::MAP_ANONYMOUS | abi::mmap::MAP_FIXED,
+         0,
+     )
+     .is_err()
+     {
+         let _ = abi::memory_unmap(mapping_base, mapping_len);
+         return Err(io::ErrorKind::Other.into());
+     }
+
+     Ok(ThreadStackMapping { mapping_base, mapping_len, stack_base, stack_len: stack_size })
+ }
+
+ fn allocate_thread_tls() -> io::Result<usize> {
+-    abi::memory_map(
++    let base = abi::memory_map(
+         0,
+         0,
+         TLS_MAPPING_SIZE,
+         abi::mmap::PROT_READ | abi::mmap::PROT_WRITE,
+         abi::mmap::MAP_PRIVATE | abi::mmap::MAP_ANONYMOUS,
+         0,
+     )
+-    .map_err(|()| io::ErrorKind::Other.into())
++    .map_err(|()| io::ErrorKind::Other)?;
++    if base == 0 {
++        return Err(io::ErrorKind::Other.into());
++    }
++    // SAFETY: initialize the new thread's shared header before clone can
++    // publish its TLS pointer or run any code on the child thread.
++    unsafe {
++        ptr::with_exposed_provenance_mut::<NativeTlsHeader>(base)
++            .write(NativeTlsHeader::INITIAL);
++    }
++    Ok(base)
+ }
+
+ fn cleanup_thread_mappings(
+     stack_mapping_base: usize,
+     stack_mapping_len: usize,
+     tls_mapping_base: usize,
+     tls_mapping_len: usize,
+ ) {
+     let _ = abi::memory_unmap(stack_mapping_base, stack_mapping_len);
+     let _ = abi::memory_unmap(tls_mapping_base, tls_mapping_len);
+ }
+
+ fn write_thread_cleanup_record(
+     tls_mapping_base: usize,
+     stack_mapping_base: usize,
+     stack_mapping_len: usize,
+ ) {
+     let record = ThreadCleanupRecord {
+         magic: THREAD_CLEANUP_MAGIC,
+         stack_mapping_base,
+         stack_mapping_len,
+         tls_mapping_base,
+         tls_mapping_len: TLS_MAPPING_SIZE,
+     };
+     // SAFETY: `tls_mapping_base` points to a writable page we just mapped.
+     unsafe {
+         ptr::write(
+             ptr::with_exposed_provenance_mut::<ThreadCleanupRecord>(
+                 tls_mapping_base + TLS_CLEANUP_OFFSET,
+             ),
+             record,
+         );
+     }
+ }
+
+ extern "C" fn thread_start(start_ptr: usize) -> ! {
+     // SAFETY: parent allocated this packet and transfers ownership to the child
+     // by passing it as the clone entry argument.
+     let start =
+         unsafe { Box::from_raw(ptr::with_exposed_provenance_mut::<ThreadStart>(start_ptr)) };
+     let ThreadStart { init, .. } = *start;
+     let rust_start = init.init();
+     rust_start();
+
+     #[cfg(target_os = "scarlet")]
+     unsafe {
+         crate::sys::thread_local::key::run_dtors();
+     }
+     #[cfg(all(
+         target_thread_local,
+         not(all(target_family = "wasm", not(target_feature = "atomics")))
+     ))]
+     unsafe {
+         crate::sys::thread_local::destructors::run();
+     }
+     #[cfg(not(target_os = "scarlet"))]
+     crate::rt::thread_cleanup();
+     exit_current_thread(0);
+ }
+
+ fn exit_current_thread(code: i32) -> ! {
+     let tls_base = arch_tls_pointer();
+     if tls_base != 0 {
+         // SAFETY: when present, Scarlet thread TLS contains this runtime-owned
+         // cleanup record at `TLS_CLEANUP_OFFSET`.
+         let record = unsafe {
+             ptr::read(ptr::with_exposed_provenance::<ThreadCleanupRecord>(
+                 tls_base + TLS_CLEANUP_OFFSET,
+             ))
+         };
+         if record.magic == THREAD_CLEANUP_MAGIC {
+             abi::thread_exit_cleanup(
+                 code,
+                 record.stack_mapping_base,
+                 record.stack_mapping_len,
+                 record.tls_mapping_base,
+                 record.tls_mapping_len,
+             );
+         }
+     }
+
+     abi::exit_current_thread(code);
+ }
+
+ #[cfg(target_arch = "aarch64")]
+ #[inline]
+ fn arch_tls_pointer() -> usize {
+     let tpidr_el0: usize;
+     // SAFETY: reading the userspace TLS register has no side effects.
+     unsafe {
+         core::arch::asm!(
+             "mrs {}, tpidr_el0",
+             out(reg) tpidr_el0,
+-            options(nostack, pure, readonly)
++            options(nostack, readonly)
+         );
+     }
+     tpidr_el0
+ }
+
+ #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+ #[inline]
+ fn arch_tls_pointer() -> usize {
+     let tp;
+     // SAFETY: reading the userspace TLS register has no side effects.
+     unsafe {
+         core::arch::asm!(
+             "mv {}, tp",
+             out(reg) tp,
+-            options(nostack, pure, readonly)
++            options(nostack, readonly)
+         );
+     }
+     tp
+ }
 diff --git a/library/std/src/sys/thread_local/key/scarlet.rs b/library/std/src/sys/thread_local/key/scarlet.rs
-index e60f2c5ebd8..25134610faa 100644
+index e60f2c5ebd8..1a9d947379e 100644
 --- a/library/std/src/sys/thread_local/key/scarlet.rs
 +++ b/library/std/src/sys/thread_local/key/scarlet.rs
-@@ -8 +7,0 @@
+@@ -1,138 +1,224 @@
+ use crate::sync::atomic::{AtomicUsize, Ordering};
+ use crate::sys::pal::abi;
+ use crate::{mem, ptr};
++use scarlet_sys::tls::{NativeTlsHeader, NATIVE_TLS_MAGIC, NATIVE_TLS_SLOT_COUNT};
++
++pub(crate) use scarlet_sys::tls::{
++    NATIVE_TLS_CLEANUP_OFFSET as TLS_CLEANUP_OFFSET, NATIVE_TLS_MAPPING_SIZE as TLS_MAPPING_SIZE,
++};
+
+ pub type Key = usize;
+
+-const PAGE_SIZE: usize = 4096;
 -const TLS_KEY_COUNT: usize = 128;
-@@ -9,0 +9,7 @@
+-const POINTER_SIZE: usize = mem::size_of::<usize>();
 +// Scarlet does not have native ELF TLS yet, so every Rust `thread_local!`
 +// consumes one runtime key. rustc alone exceeds the POSIX-minimum 128 keys.
-+const TLS_KEY_COUNT: usize = 1024;
-+// Preserve the native thread layout: slot zero owns the namespace list, and
-+// the cleanup record stays beyond the former inline key table.
-+pub(crate) const TLS_CLEANUP_OFFSET: usize = TLS_KEY_COUNT * POINTER_SIZE;
-+pub(crate) const TLS_MAPPING_SIZE: usize = TLS_CLEANUP_OFFSET + PAGE_SIZE;
-@@ -13 +18,0 @@
++const TLS_KEY_COUNT: usize = NATIVE_TLS_SLOT_COUNT;
+ const DTOR_ROUNDS: usize = 4;
+
+ static NEXT_KEY: AtomicUsize = AtomicUsize::new(1);
 -static MAIN_TLS_BASE: AtomicUsize = AtomicUsize::new(0);
-@@ -15,0 +21,11 @@
+ static DTORS: [AtomicUsize; TLS_KEY_COUNT] = [const { AtomicUsize::new(0) }; TLS_KEY_COUNT];
+
 +// Each statically linked copy of std allocates its own key numbers. The address
 +// of its destructor table identifies that namespace for the lifetime of the DSO.
-+// Slot zero of the thread mapping (never a valid key) owns the list. Keeping the
-+// cleanup record at the existing offset also permits the loader and executable
-+// to use the same native thread layout. DSOs must remain loaded until thread exit.
++// The shared header's first word owns the list. Its errno slot is independent
++// of every std namespace. Keep the cleanup record at its established offset;
++// loader, executable and DSOs must use this same versioned native TLS layout.
++// DSOs must remain loaded until thread exit.
 +struct Namespace {
 +    next: *mut Namespace,
 +    dtors: *const [AtomicUsize; TLS_KEY_COUNT],
 +    values: [usize; TLS_KEY_COUNT],
 +}
 +
-@@ -47,0 +64 @@ pub(crate) unsafe fn run_dtors() {
+ #[inline]
+ pub fn create(dtor: Option<unsafe extern "C" fn(*mut u8)>) -> Key {
+     let key = NEXT_KEY.fetch_add(1, Ordering::Relaxed);
+     if key >= TLS_KEY_COUNT {
+         rtabort!("out of TLS keys");
+     }
+     DTORS[key].store(dtor.map_or(0, |dtor| dtor as usize), Ordering::Release);
+     key
+ }
+
+ #[inline]
+ pub unsafe fn set(key: Key, value: *mut u8) {
+     let slot = tls_slot(key);
+     unsafe {
+         slot.write(value as usize);
+     }
+ }
+
+ #[inline]
+ pub unsafe fn get(key: Key) -> *mut u8 {
+     let slot = tls_slot(key);
+     unsafe { ptr::with_exposed_provenance_mut(slot.read()) }
+ }
+
+ #[inline]
+ pub unsafe fn destroy(key: Key) {
+     if key < TLS_KEY_COUNT {
+         DTORS[key].store(0, Ordering::Release);
+     }
+ }
+
+ pub(crate) unsafe fn run_dtors() {
 +    let head = ptr::with_exposed_provenance_mut::<*mut Namespace>(tls_base());
-@@ -50,15 +67,16 @@ pub(crate) unsafe fn run_dtors() {
+     for _ in 0..DTOR_ROUNDS {
+         let mut any = false;
 -        for key in 1..TLS_KEY_COUNT {
 -            let dtor = DTORS[key].load(Ordering::Acquire);
 -            if dtor == 0 {
@@ -1027,9 +1459,14 @@ index e60f2c5ebd8..25134610faa 100644
 +                        );
 +                    }
 +                }
-@@ -65,0 +84 @@ pub(crate) unsafe fn run_dtors() {
+             }
 +            namespace = unsafe { (*namespace).next };
-@@ -71,0 +91,9 @@ pub(crate) unsafe fn run_dtors() {
+         }
+
+         if !any {
+             break;
+         }
+     }
 +    // Values that keep reinstalling themselves after DTOR_ROUNDS have the same
 +    // bounded-cleanup behavior as before. Reclaim the per-thread tables; the
 +    // thread mapping itself is released by native thread exit / process exit.
@@ -1039,10 +1476,14 @@ index e60f2c5ebd8..25134610faa 100644
 +        unsafe { drop(Box::from_raw(namespace)) };
 +        namespace = next;
 +    }
-@@ -76 +104 @@ fn tls_slot(key: Key) -> *mut usize {
+ }
+
+ #[inline]
+ fn tls_slot(key: Key) -> *mut usize {
 -    if key >= TLS_KEY_COUNT {
 +    if key == 0 || key >= TLS_KEY_COUNT {
-@@ -79 +107,19 @@ fn tls_slot(key: Key) -> *mut usize {
+         rtabort!("invalid TLS key");
+     }
 -    ptr::with_exposed_provenance_mut::<usize>(tls_base() + key * POINTER_SIZE)
 +    let head = ptr::with_exposed_provenance_mut::<*mut Namespace>(tls_base());
 +    // The head and list are accessed exclusively by their owning thread. Heap
@@ -1063,41 +1504,359 @@ index e60f2c5ebd8..25134610faa 100644
 +        *head = namespace;
 +        &raw mut (*namespace).values[key]
 +    }
-@@ -88,5 +133,0 @@ fn main_tls_base() -> usize {
+ }
+
+ fn tls_base() -> usize {
++    // Keep the Rust TLS fallback for code entered without the Scarlet CRT.
++    ensure_native_tls()
++}
++
++/// Initialize the initial thread before any environment or constructor code.
++/// A loader and executable may both enter here on the same thread; preserve
++/// the established header, errno and namespace list in that case.
++pub(crate) fn ensure_native_tls() -> usize {
+     let base = arch_tls_pointer();
+-    if base != 0 { base } else { main_tls_base() }
++    if base == 0 {
++        main_tls_base()
++    } else {
++        checked_native_tls(base);
++        base
++    }
+ }
+
+-fn main_tls_base() -> usize {
 -    let base = MAIN_TLS_BASE.load(Ordering::Acquire);
 -    if base != 0 {
 -        return base;
--    }
--
-@@ -96 +137 @@ fn main_tls_base() -> usize {
++/// Return the shared C errno slot without allocating or lazily creating TLS.
++#[inline]
++pub(crate) fn native_errno_location() -> *mut i32 {
++    let header = checked_native_tls(arch_tls_pointer());
++    // SAFETY: validation established the current thread's initialized header.
++    unsafe { &raw mut (*header).errno }
++}
++
++#[inline]
++fn checked_native_tls(base: usize) -> *mut NativeTlsHeader {
++    if base == 0 {
++        core::intrinsics::abort();
+     }
++    let header = ptr::with_exposed_provenance_mut::<NativeTlsHeader>(base);
++    // SAFETY: a nonzero native thread pointer addresses its runtime TLS mapping.
++    // Reject older inline-key or otherwise incompatible layouts before using
++    // any namespace pointer. This failure path must not allocate or access TLS.
++    if unsafe { (*header).magic } != NATIVE_TLS_MAGIC {
++        core::intrinsics::abort();
++    }
++    header
++}
+
++fn main_tls_base() -> usize {
+     let new_base = abi::memory_map(
+         0,
+         0,
 -        PAGE_SIZE,
 +        TLS_MAPPING_SIZE,
-@@ -103,6 +144,8 @@ fn main_tls_base() -> usize {
+         abi::mmap::PROT_READ | abi::mmap::PROT_WRITE,
+         abi::mmap::MAP_PRIVATE | abi::mmap::MAP_ANONYMOUS,
+         0,
+     )
+-    .unwrap_or_else(|()| rtabort!("failed to allocate main thread TLS"));
++    .unwrap_or_else(|()| core::intrinsics::abort());
++    if new_base == 0 {
++        core::intrinsics::abort();
++    }
++    // SAFETY: this is a new writable mapping exclusively owned by this thread.
++    unsafe {
++        ptr::with_exposed_provenance_mut::<NativeTlsHeader>(new_base)
++            .write(NativeTlsHeader::INITIAL);
++    }
+
 -    match MAIN_TLS_BASE.compare_exchange(0, new_base, Ordering::Release, Ordering::Acquire) {
 -        Ok(_) => new_base,
 -        Err(existing) => {
 -            let _ = abi::memory_unmap(new_base, PAGE_SIZE);
 -            existing
 -        }
-+    // Publish in the architectural thread pointer, rather than a std-private
-+    // static, so libraries entered on the initial thread share its namespace
-+    // list too. Spawned native threads already receive a mapping via SET_TLS.
-+    unsafe {
-+        #[cfg(target_arch = "aarch64")]
-+        core::arch::asm!("msr tpidr_el0, {}", in(reg) new_base, options(nostack));
-+        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-+        core::arch::asm!("mv tp, {}", in(reg) new_base, options(nostack));
-@@ -109,0 +153 @@ fn main_tls_base() -> usize {
++    // SetTls publishes the initialized mapping in both the kernel's ABI state
++    // and the architectural thread pointer. A register-only write would leave
++    // the kernel with stale state during scheduling or subsequent native calls.
++    if scarlet_sys::syscall1(scarlet_sys::Syscall::SetTls, new_base) != 0 {
++        let _ = abi::memory_unmap(new_base, TLS_MAPPING_SIZE);
++        core::intrinsics::abort();
+     }
 +    new_base
+ }
+
+ #[cfg(target_arch = "aarch64")]
+ #[inline]
+ fn arch_tls_pointer() -> usize {
+     let tpidr_el0: usize;
+     unsafe {
+         core::arch::asm!(
+             "mrs {}, tpidr_el0",
+             out(reg) tpidr_el0,
+-            options(nostack, pure, readonly)
++            options(nostack, readonly)
+         );
+     }
+     tpidr_el0
+ }
+
+ #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+ #[inline]
+ fn arch_tls_pointer() -> usize {
+     let tp;
+     unsafe {
+         core::arch::asm!(
+             "mv {}, tp",
+             out(reg) tp,
+-            options(nostack, pure, readonly)
++            options(nostack, readonly)
+         );
+     }
+     tp
+ }
 diff --git a/library/std/src/sys/thread_local/mod.rs b/library/std/src/sys/thread_local/mod.rs
-index d602f2259a8..320af615c4f 100644
+index d602f2259a8..a7672117f53 100644
 --- a/library/std/src/sys/thread_local/mod.rs
 +++ b/library/std/src/sys/thread_local/mod.rs
-@@ -201,3 +201,3 @@ pub(crate) mod key {
+@@ -1,230 +1,233 @@
+ //! Implementation of the `thread_local` macro.
+ //!
+ //! There are three different thread-local implementations:
+ //! * Some targets lack threading support, and hence have only one thread, so
+ //!   the TLS data is stored in a normal `static`.
+ //! * Some targets support TLS natively via the dynamic linker and C runtime.
+ //! * On some targets, the OS provides a library-based TLS implementation. The
+ //!   TLS data is heap-allocated and referenced using a TLS key.
+ //!
+ //! Each implementation provides a macro which generates the `LocalKey` `const`
+ //! used to reference the TLS variable, along with the necessary helper structs
+ //! to track the initialization/destruction state of the variable.
+ //!
+ //! Additionally, this module contains abstractions for the OS interfaces used
+ //! for these implementations.
+
+ #![cfg_attr(test, allow(unused))]
+ #![doc(hidden)]
+ #![forbid(unsafe_op_in_unsafe_fn)]
+ #![unstable(
+     feature = "thread_local_internals",
+     reason = "internal details of the thread_local macro",
+     issue = "none"
+ )]
+
+ cfg_select! {
+     any(
+         all(target_family = "wasm", not(target_feature = "atomics")),
+         target_os = "uefi",
+         target_os = "zkvm",
+         target_os = "trusty",
+         target_os = "vexos",
+     ) => {
+         mod no_threads;
+         pub use no_threads::{EagerStorage, LazyStorage, thread_local_inner};
+         pub(crate) use no_threads::{LocalPointer, local_pointer};
+     }
+     target_thread_local => {
+         mod native;
+         pub use native::{EagerStorage, LazyStorage, thread_local_inner};
+         pub(crate) use native::{LocalPointer, local_pointer};
+     }
+     _ => {
+         mod os;
+         pub use os::{Storage, thread_local_inner, value_align};
+         pub(crate) use os::{LocalPointer, local_pointer};
+     }
+ }
+
+ /// The native TLS implementation needs a way to register destructors for its data.
+ /// This module contains platform-specific implementations of that register.
+ ///
+ /// It turns out however that most platforms don't have a way to register a
+ /// destructor for each variable. On these platforms, we keep track of the
+ /// destructors ourselves and register (through the [`guard`] module) only a
+ /// single callback that runs all of the destructors in the list.
+ #[cfg(all(target_thread_local, not(all(target_family = "wasm", not(target_feature = "atomics")))))]
+ pub(crate) mod destructors {
+     cfg_select! {
+         any(
+             target_os = "linux",
+             target_os = "android",
+             target_os = "fuchsia",
+             target_os = "redox",
+             target_os = "hurd",
+             target_os = "netbsd",
+             target_os = "dragonfly"
+         ) => {
+             mod linux_like;
+             mod list;
+             pub(super) use linux_like::register;
+             pub(super) use list::run;
+         }
+         _ => {
+             mod list;
+             pub(super) use list::register;
+             pub(crate) use list::run;
+         }
+     }
+ }
+
+ /// This module provides a way to schedule the execution of the destructor list
+ /// and the [runtime cleanup](crate::rt::thread_cleanup) function. Calling `enable`
+ /// should ensure that these functions are called at the right times.
+ pub(crate) mod guard {
+     cfg_select! {
+         all(target_thread_local, target_vendor = "apple") => {
+             mod apple;
+             pub(crate) use apple::enable;
+         }
+         target_os = "windows" => {
+             mod windows;
+             pub(crate) use windows::enable;
+         }
+         any(
+             all(target_family = "wasm", not(
+                 all(target_os = "wasi", target_env = "p1", target_feature = "atomics")
+             )),
+             target_os = "uefi",
+             target_os = "zkvm",
+             target_os = "trusty",
+             target_os = "vexos",
+         ) => {
+             pub(crate) fn enable() {
+                 // FIXME: Right now there is no concept of "thread exit" on
+                 // wasm, but this is likely going to show up at some point in
+                 // the form of an exported symbol that the wasm runtime is going
+                 // to be expected to call. For now we just leak everything, but
+                 // if such a function starts to exist it will probably need to
+                 // iterate the destructor list with these functions:
+                 #[cfg(all(target_family = "wasm", target_feature = "atomics"))]
+                 #[allow(unused)]
+                 use super::destructors::run;
+                 #[allow(unused)]
+                 use crate::rt::thread_cleanup;
+             }
+         }
+         any(
+             target_os = "hermit",
+             target_os = "xous",
+         ) => {
+             // `std` is the only runtime, so it just calls the destructor functions
+             // itself when the time comes.
+             pub(crate) fn enable() {}
+         }
+         target_os = "solid_asp3" => {
+             mod solid;
+             pub(crate) use solid::enable;
+         }
+         _ => {
+             mod key;
+             pub(crate) use key::enable;
+         }
+     }
+ }
+
+ /// `const`-creatable TLS keys.
+ ///
+ /// Most OSs without native TLS will provide a library-based way to create TLS
+ /// storage. For each TLS variable, we create a key, which can then be used to
+ /// reference an entry in a thread-local table. This then associates each key
+ /// with a pointer which we can get and set to store our data.
+ pub(crate) mod key {
+     cfg_select! {
+         any(
+             all(
+                 not(target_vendor = "apple"),
+                 not(target_family = "wasm"),
+                 target_family = "unix",
+             ),
+             all(not(target_thread_local), target_vendor = "apple"),
+             target_os = "teeos",
+             all(target_os = "wasi", target_env = "p1", target_feature = "atomics"),
+         ) => {
+             mod racy;
+             mod unix;
+             #[cfg(test)]
+             mod tests;
+             pub(super) use racy::LazyKey;
+             pub(super) use unix::{Key, set};
+             #[cfg(any(not(target_thread_local), test))]
+             pub(super) use unix::get;
+             use unix::{create, destroy};
+         }
+         all(not(target_thread_local), target_os = "windows") => {
+             #[cfg(test)]
+             mod tests;
+             mod windows;
+             pub(super) use windows::{Key, LazyKey, get, run_dtors, set};
+         }
+         all(target_vendor = "fortanix", target_env = "sgx") => {
+             mod racy;
+             mod sgx;
+             #[cfg(test)]
+             mod tests;
+             pub(super) use racy::LazyKey;
+             pub(super) use sgx::{Key, get, set};
+             use sgx::{create, destroy};
+         }
+         target_os = "xous" => {
+             mod racy;
+             #[cfg(test)]
+             mod tests;
+             mod xous;
+             pub(super) use racy::LazyKey;
+             pub(crate) use xous::destroy_tls;
+             pub(super) use xous::{Key, get, set};
+             use xous::{create, destroy};
+         }
+         target_os = "motor" => {
+             mod racy;
+             #[cfg(test)]
+             mod tests;
+             pub(super) use racy::LazyKey;
+             pub(super) use moto_rt::tls::{Key, get, set};
+             use moto_rt::tls::{create, destroy};
+         }
+         target_os = "scarlet" => {
+             mod racy;
+             mod scarlet;
              pub(super) use racy::LazyKey;
 -            pub(crate) use scarlet::run_dtors;
-+            pub(crate) use scarlet::{TLS_CLEANUP_OFFSET, TLS_MAPPING_SIZE, run_dtors};
++            pub(crate) use scarlet::{
++                TLS_CLEANUP_OFFSET, TLS_MAPPING_SIZE, ensure_native_tls, native_errno_location,
++                run_dtors,
++            };
              pub(super) use scarlet::{Key, get, set};
+             use scarlet::{create, destroy};
+         }
+         _ => {}
+     }
+ }
+
+ /// Run a callback in a scenario which must not unwind (such as a `extern "C"
+ /// fn` declared in a user crate). If the callback unwinds anyway, then
+ /// `rtabort` with a message about thread local panicking on drop.
+ #[inline]
+ #[allow(dead_code)]
+ fn abort_on_dtor_unwind(f: impl FnOnce()) {
+     // Using a guard like this is lower cost.
+     let guard = DtorUnwindGuard;
+     f();
+     core::mem::forget(guard);
+
+     struct DtorUnwindGuard;
+     impl Drop for DtorUnwindGuard {
+         #[inline]
+         fn drop(&mut self) {
+             // This is not terribly descriptive, but it doesn't need to be as we'll
+             // already have printed a panic message at this point.
+             rtabort!("thread local panicked on drop");
+         }
+     }
+ }
 diff --git a/library/scarlet-abi/src/fs.rs b/library/scarlet-abi/src/fs.rs
 new file mode 100644
 --- /dev/null
@@ -1162,24 +1921,52 @@ new file mode 100644
 +    assert!(core::mem::offset_of!(RawFileTimes, modified) == 16);
 +};
 diff --git a/library/scarlet-abi/src/lib.rs b/library/scarlet-abi/src/lib.rs
+index 19b767f856b..7012411fdff 100644
 --- a/library/scarlet-abi/src/lib.rs
 +++ b/library/scarlet-abi/src/lib.rs
-@@ -8,0 +9 @@
+@@ -6,7 +6,9 @@
+
+ #![no_std]
+
 +pub mod fs;
-@@ -187,0 +189,2 @@
+ pub mod native_scalar;
++pub mod tls;
+
+ /// Raw kernel object handle value used at the Scarlet Native ABI boundary.
+ pub type RawHandle = i32;
+@@ -185,6 +187,8 @@ pub enum Syscall {
+     FileSeek = 300,
+     FileTruncate = 301,
+     FileMetadata = 302,
 +    FileSetTimes = 303,
 +    FileSync = 304,
-@@ -203,0 +207,4 @@
+
+     // VFS operations
+     VfsOpen = 400,
+@@ -201,6 +205,10 @@ pub enum Syscall {
+     VfsCreateHardlink = 411,
+     /// Query path metadata without following the final symbolic link.
+     VfsSymlinkMetadata = 412,
 +    VfsCanonicalize = 413,
 +    VfsSetTimes = 414,
 +    VfsMetadataWithStatus = 415,
 +    VfsCreateDirectoryWithStatus = 416,
+
+     // Filesystem operations
+     FsMount = 500,
 diff --git a/library/scarlet-sys/src/lib.rs b/library/scarlet-sys/src/lib.rs
+index 552b49979d4..8508f630c92 100644
 --- a/library/scarlet-sys/src/lib.rs
 +++ b/library/scarlet-sys/src/lib.rs
-@@ -28 +28 @@
+@@ -25,7 +25,7 @@
+ #[path = "arch/riscv.rs"]
+ mod arch;
+
 -pub use scarlet_abi::native_scalar;
-+pub use scarlet_abi::{fs, native_scalar};
++pub use scarlet_abi::{fs, native_scalar, tls};
+
+ /// Invoke a wide-result syscall with up to six Native argument words.
+ /// RV32 returns the low/high halves in a0/a1; 64-bit targets return one word.
 diff --git a/library/std/src/sys/fs/scarlet.rs b/library/std/src/sys/fs/scarlet.rs
 --- a/library/std/src/sys/fs/scarlet.rs
 +++ b/library/std/src/sys/fs/scarlet.rs
@@ -1391,14 +2178,70 @@ diff --git a/library/std/src/sys/pal/scarlet/abi.rs b/library/std/src/sys/pal/sc
 +    );
 +    filesystem_result(ret).map(drop)
 diff --git a/library/std/src/sys/pal/scarlet/common.rs b/library/std/src/sys/pal/scarlet/common.rs
+index d9ef468b6c5..f49ce8b40e9 100644
 --- a/library/std/src/sys/pal/scarlet/common.rs
 +++ b/library/std/src/sys/pal/scarlet/common.rs
-@@ -8 +8 @@
+@@ -1,152 +1,168 @@
+ use core::sync::atomic::{AtomicPtr, Ordering};
+
+ use crate::ffi::c_char;
+ use crate::io as std_io;
+
+ // The kernel keeps the initial stack mapped for the life of the process.
+ // Publish auxv before calling constructors, which may detect CPU features.
 -// A custom entry point that skips `_start` keeps the outline helper's safe
 +// A custom entry point that skips `__scarlet_start` keeps the outline helper's safe
-@@ -57,0 +58 @@
+ // LL/SC default unless it performs equivalent auxv and constructor setup.
+ static AUXV: AtomicPtr<usize> = AtomicPtr::new(core::ptr::null_mut());
+
+ #[unsafe(no_mangle)]
+ pub extern "C" fn __scarlet_getauxval(key: usize) -> usize {
+     let mut entry = AUXV.load(Ordering::Acquire);
+     if entry.is_null() {
+         return 0;
+     }
+     // SAFETY: The kernel places a terminated array of native-word pairs after
+     // envp on the persistent initial process stack.
+     unsafe {
+         while *entry != 0 {
+             if *entry == key {
+                 return *entry.add(1);
+             }
+             entry = entry.add(2);
+         }
+     }
+     0
+ }
+
+ // SAFETY: must be called only once during runtime initialization.
+ // NOTE: this is not guaranteed to run, for example when Rust code is called externally.
+ pub unsafe fn init(argc: isize, argv: *const *const u8, _sigpipe: u8) {
+     // SAFETY: `rt::lang_start` forwards the process argc/argv pair that was
+     // passed to the compiler-generated `main` shim.
+     unsafe {
+         crate::sys::args::init(argc, argv);
+     }
+ }
+
+ // SAFETY: must be called only once during runtime cleanup.
+ // NOTE: this is not guaranteed to run, for example when the program aborts.
+ pub unsafe fn cleanup() {}
+
+ pub fn unsupported<T>() -> std_io::Result<T> {
+     Err(unsupported_err())
+ }
+
+ pub fn unsupported_err() -> std_io::Error {
+     std_io::Error::UNSUPPORTED_PLATFORM
+ }
+
+ pub fn is_interrupted(code: i32) -> bool {
+     code == scarlet_sys::ERRNO_EINTR
+ }
+
+ pub fn decode_error_kind(code: i32) -> crate::io::ErrorKind {
 +    use scarlet_sys::fs::*;
-@@ -58,0 +60,11 @@
+     match code {
 +        ERRNO_ENOENT => crate::io::ErrorKind::NotFound,
 +        ERRNO_EACCES => crate::io::ErrorKind::PermissionDenied,
 +        ERRNO_EEXIST => crate::io::ErrorKind::AlreadyExists,
@@ -1410,7 +2253,30 @@ diff --git a/library/std/src/sys/pal/scarlet/common.rs b/library/std/src/sys/pal
 +        ERRNO_ENOTEMPTY => crate::io::ErrorKind::DirectoryNotEmpty,
 +        ERRNO_ELOOP => crate::io::ErrorKind::FilesystemLoop,
 +        ERRNO_EOVERFLOW => crate::io::ErrorKind::FileTooLarge,
-@@ -82,0 +95,7 @@
+         scarlet_sys::ERRNO_EINTR => crate::io::ErrorKind::Interrupted,
+         scarlet_sys::ERRNO_EIO => crate::io::ErrorKind::Other,
+         scarlet_sys::ERRNO_EAGAIN => crate::io::ErrorKind::WouldBlock,
+         scarlet_sys::ERRNO_EINVAL => crate::io::ErrorKind::InvalidInput,
+         scarlet_sys::ERRNO_EMSGSIZE => crate::io::ErrorKind::InvalidInput,
+         scarlet_sys::ERRNO_EPROTONOSUPPORT | scarlet_sys::ERRNO_EOPNOTSUPP => {
+             crate::io::ErrorKind::Unsupported
+         }
+         scarlet_sys::ERRNO_EADDRINUSE => crate::io::ErrorKind::AddrInUse,
+         scarlet_sys::ERRNO_EADDRNOTAVAIL => crate::io::ErrorKind::AddrNotAvailable,
+         scarlet_sys::ERRNO_ENETUNREACH => crate::io::ErrorKind::NetworkUnreachable,
+         scarlet_sys::ERRNO_ECONNABORTED => crate::io::ErrorKind::ConnectionAborted,
+         scarlet_sys::ERRNO_ECONNRESET => crate::io::ErrorKind::ConnectionReset,
+         scarlet_sys::ERRNO_ENOTCONN => crate::io::ErrorKind::NotConnected,
+         scarlet_sys::ERRNO_ETIMEDOUT => crate::io::ErrorKind::TimedOut,
+         scarlet_sys::ERRNO_ECONNREFUSED => crate::io::ErrorKind::ConnectionRefused,
+         _ => crate::io::ErrorKind::Uncategorized,
+     }
+ }
+
+ pub fn abort_internal() -> ! {
+     core::intrinsics::abort();
+ }
+
 +// Only the executable's CRT references `main` and linker-defined constructor
 +// boundaries. Keeping those references out of std lets a Rust dylib embed std
 +// without acquiring an entry point or unresolved executable-only symbols.
@@ -1418,31 +2284,13 @@ diff --git a/library/std/src/sys/pal/scarlet/common.rs b/library/std/src/sys/pal
 +// SAFETY: The executable CRT passes the persistent kernel argc/argv/envp/auxv
 +// arrays, its C ABI main shim and the linker-defined constructor range. This
 +// function is entered once, before any application code runs.
-@@ -85,3 +104,20 @@
+ #[cfg(not(test))]
+ #[unsafe(no_mangle)]
 -pub extern "C" fn _start(argc: isize, argv: *const *const c_char) -> ! {
 -    unsafe extern "C" {
 -        fn main(argc: i32, argv: *const *const c_char) -> i32;
-+pub unsafe extern "C" fn __scarlet_start(
-+    argc: isize,
-+    argv: *const *const c_char,
-+    envp: *const *const c_char,
-+    auxv: *const usize,
-+    main: unsafe extern "C" fn(i32, *const *const c_char) -> i32,
-+    init_array_start: *const unsafe extern "C" fn(),
-+    init_array_end: *const unsafe extern "C" fn(),
-+) -> ! {
-+    AUXV.store(auxv.cast_mut(), Ordering::Release);
-+    crate::sys::env::init(envp);
-+
-+    // The loader initializes dependency DSOs. Main-image constructors remain
-+    // the executable CRT's responsibility on both Scarlet architectures.
-+    let mut entry = init_array_start;
-+    while entry < init_array_end {
-+        // SAFETY: The CRT supplies the executable's array of C constructors.
-+        unsafe { (*entry)() };
-+        // SAFETY: The next pointer stays within or one past the constructor array.
-+        entry = unsafe { entry.add(1) };
-@@ -90,23 +126,2 @@
+-    }
+-
 -    let envp = envp_from_argv(argc, argv);
 -    if !envp.is_null() {
 -        // SAFETY: Scarlet's process ABI puts auxv immediately after the
@@ -1455,20 +2303,54 @@ diff --git a/library/std/src/sys/pal/scarlet/common.rs b/library/std/src/sys/pal
 -            AUXV.store(end.add(1).cast_mut().cast(), Ordering::Release);
 -        }
 -    }
--    crate::sys::env::init(envp);
--
++pub unsafe extern "C" fn __scarlet_start(
++    argc: isize,
++    argv: *const *const c_char,
++    envp: *const *const c_char,
++    auxv: *const usize,
++    main: unsafe extern "C" fn(i32, *const *const c_char) -> i32,
++    init_array_start: *const unsafe extern "C" fn(),
++    init_array_end: *const unsafe extern "C" fn(),
++) -> ! {
++    crate::sys::thread_local::key::ensure_native_tls();
++    AUXV.store(auxv.cast_mut(), Ordering::Release);
+     crate::sys::env::init(envp);
+
 -    #[cfg(target_arch = "aarch64")]
 -    // SAFETY: The ELF linker defines these bounds and the entries are C ABI
 -    // constructors. They run after auxv is available and before user main.
 -    unsafe {
 -        run_init_array()
 -    };
--
++    // The loader initializes dependency DSOs. Main-image constructors remain
++    // the executable CRT's responsibility on both Scarlet architectures.
++    let mut entry = init_array_start;
++    while entry < init_array_end {
++        // SAFETY: The CRT supplies the executable's array of C constructors.
++        unsafe { (*entry)() };
++        // SAFETY: The next pointer stays within or one past the constructor array.
++        entry = unsafe { entry.add(1) };
++    }
+
 -    // SAFETY: rustc emits `main` as the C ABI entry shim for normal Rust
 -    // executables. It calls `std::rt::lang_start`, which runs `sys::init`.
 +    // SAFETY: rustc's executable main shim calls std::rt::lang_start, which
 +    // initializes process arguments through sys::init before calling user main.
-@@ -128,2 +143,5 @@
+     let code = unsafe { main(argc as i32, argv) };
+     #[cfg(target_os = "scarlet")]
+     unsafe {
+         crate::sys::thread_local::key::run_dtors();
+     }
+     #[cfg(all(
+         target_thread_local,
+         not(all(target_family = "wasm", not(target_feature = "atomics")))
+     ))]
+     crate::sys::thread_local::destructors::run();
+     #[cfg(not(target_os = "scarlet"))]
+     crate::rt::thread_cleanup();
+     crate::sys::pal::os::exit(code);
+ }
+
 -#[cfg(target_arch = "aarch64")]
 -unsafe fn run_init_array() {
 +// RV32 remains static-only and retains its existing Rust entry. The separate
@@ -1476,11 +2358,10 @@ diff --git a/library/std/src/sys/pal/scarlet/common.rs b/library/std/src/sys/pal
 +#[cfg(all(not(test), target_pointer_width = "32"))]
 +#[unsafe(no_mangle)]
 +pub unsafe extern "C" fn _start(argc: isize, argv: *const *const c_char) -> ! {
-@@ -131,2 +149 @@
+     unsafe extern "C" {
 -        static __init_array_start: extern "C" fn();
 -        static __init_array_end: extern "C" fn();
-+        fn main(argc: i32, argv: *const *const c_char) -> i32;
-@@ -134,8 +151,16 @@
+-    }
 -    let mut entry = &raw const __init_array_start;
 -    let end = &raw const __init_array_end;
 -    while entry < end {
@@ -1489,6 +2370,17 @@ diff --git a/library/std/src/sys/pal/scarlet/common.rs b/library/std/src/sys/pal
 -        // SAFETY: The next pointer remains within or one past the array.
 -        entry = unsafe { entry.add(1) };
 -    }
+-}
+-
+-fn envp_from_argv(argc: isize, argv: *const *const c_char) -> *const *const c_char {
+-    if argc < 0 || argv.is_null() {
+-        return crate::ptr::null();
++        fn main(argc: i32, argv: *const *const c_char) -> i32;
+     }
+-
+-    // SAFETY: The Scarlet process ABI passes a null-terminated argv array,
+-    // immediately followed by a null-terminated envp array.
+-    unsafe { argv.add(argc as usize + 1) }
 +    let (envp, auxv) = if argc < 0 || argv.is_null() {
 +        (crate::ptr::null(), crate::ptr::null())
 +    } else {
@@ -1505,17 +2397,7 @@ diff --git a/library/std/src/sys/pal/scarlet/common.rs b/library/std/src/sys/pal
 +    // SAFETY: Forward the kernel arrays and rustc's main shim. RV32 previously
 +    // did not run an init array, so its empty constructor range stays unchanged.
 +    unsafe { __scarlet_start(argc, argv, envp, auxv, main, crate::ptr::null(), crate::ptr::null()) }
-@@ -143,10 +167,0 @@
--
--fn envp_from_argv(argc: isize, argv: *const *const c_char) -> *const *const c_char {
--    if argc < 0 || argv.is_null() {
--        return crate::ptr::null();
--    }
--
--    // SAFETY: The Scarlet process ABI passes a null-terminated argv array,
--    // immediately followed by a null-terminated envp array.
--    unsafe { argv.add(argc as usize + 1) }
--}
+ }
 diff --git a/library/std/src/sys/alloc/scarlet.rs b/library/std/src/sys/alloc/scarlet.rs
 --- a/library/std/src/sys/alloc/scarlet.rs
 +++ b/library/std/src/sys/alloc/scarlet.rs
@@ -1529,3 +2411,48 @@ diff --git a/library/std/src/sys/alloc/scarlet.rs b/library/std/src/sys/alloc/sc
 +        .filter(|end| *end <= block_end)
 +        .unwrap_or(block_end);
 +    Some((data_addr, used_end - block_start))
+diff --git a/library/scarlet-abi/src/tls.rs b/library/scarlet-abi/src/tls.rs
+new file mode 100644
+index 00000000000..beb743e107e
+--- /dev/null
++++ b/library/scarlet-abi/src/tls.rs
+@@ -0,0 +1,39 @@
++//! Native userspace TLS mapping shared by the CRT, Rust std and C ABI.
++//!
++//! This is a runtime layout, not ELF TLS. A matching CRT initializes it before
++//! constructors or user code; a thread creator initializes it before clone.
++//! The initial mapping lives until process exit, and spawned-thread mappings
++//! are released by the existing native thread-exit cleanup protocol.
++
++/// Identifies the namespace-based TLS layout with an allocation-free errno.
++pub const NATIVE_TLS_MAGIC: u32 = 0x5343_5401;
++pub const NATIVE_TLS_SLOT_COUNT: usize = 1024;
++pub const NATIVE_TLS_CLEANUP_OFFSET: usize = NATIVE_TLS_SLOT_COUNT * size_of::<usize>();
++pub const NATIVE_TLS_MAPPING_SIZE: usize = NATIVE_TLS_CLEANUP_OFFSET + 4096;
++
++/// Header at the architectural thread pointer (TPIDR_EL0 or tp).
++///
++/// Fields are owned by this thread, including when accessed by another DSO.
++/// Namespace nodes remain private to the matching Rust TLS implementation.
++#[repr(C)]
++#[derive(Clone, Copy, Debug)]
++pub struct NativeTlsHeader {
++    pub namespace_head: usize,
++    pub magic: u32,
++    pub errno: i32,
++}
++
++impl NativeTlsHeader {
++    pub const INITIAL: Self = Self {
++        namespace_head: 0,
++        magic: NATIVE_TLS_MAGIC,
++        errno: 0,
++    };
++}
++
++const _: () = {
++    assert!(core::mem::offset_of!(NativeTlsHeader, namespace_head) == 0);
++    assert!(core::mem::offset_of!(NativeTlsHeader, magic) == size_of::<usize>());
++    assert!(core::mem::offset_of!(NativeTlsHeader, errno) == size_of::<usize>() + 4);
++    assert!(size_of::<NativeTlsHeader>() <= NATIVE_TLS_CLEANUP_OFFSET);
++};
