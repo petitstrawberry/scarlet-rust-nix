@@ -57,13 +57,16 @@ jobs:
         env:
           CACHE_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
           CACHE_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           mkdir -p "$NATIVE_OUTPUT"
           python3 - <<'PY'
           import hashlib, json, os, pathlib
           scope = hashlib.sha256((os.environ['CACHE_REPO'] + ':' + os.environ['CACHE_REF']).encode()).hexdigest()[:20]
+          default_scope = hashlib.sha256((os.environ['GITHUB_REPOSITORY'] + ':' + os.environ['DEFAULT_BRANCH']).encode()).hexdigest()[:20]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('scope=' + scope + '\n')
+              f.write('default_scope=' + default_scope + '\n')
           manifest = {'schema': 1, 'status': 'environment-not-ready', 'native_host': os.environ['NATIVE_TARGET'], 'backend': os.environ['NATIVE_BACKEND'], 'guest_verified': False,
                       'packaging_commit': os.environ['GITHUB_SHA'], 'github_run_id': os.environ['GITHUB_RUN_ID']}
           pathlib.Path(os.environ['NATIVE_OUTPUT'], 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
@@ -102,7 +105,7 @@ jobs:
           name: ${{ env.CACHIX_CACHE_NAME }}
           authToken: ${{ env.CACHIX_AUTH_TOKEN }}
 
-      - name: Restore this branch's bootstrap intermediates
+      - name: Restore bootstrap intermediates
         uses: actions/cache/restore@v4
         id: bootstrap-cache
         with:
@@ -116,6 +119,13 @@ jobs:
           restore-keys: |
             native-host-v1-${{ runner.os }}-${{ env.NATIVE_TARGET }}-${{ env.NATIVE_BACKEND }}-${{ steps.identity.outputs.scope }}-${{ hashFiles('flake.lock', 'nix/vendor-rust-src.nix') }}-${{ hashFiles('native-host/**', 'scripts/*native-host*', 'flake.nix') }}-
             native-host-v1-${{ runner.os }}-${{ env.NATIVE_TARGET }}-${{ env.NATIVE_BACKEND }}-${{ steps.identity.outputs.scope }}-${{ hashFiles('flake.lock', 'nix/vendor-rust-src.nix') }}-
+            native-host-v1-${{ runner.os }}-${{ env.NATIVE_TARGET }}-${{ env.NATIVE_BACKEND }}-${{ steps.identity.outputs.default_scope }}-${{ hashFiles('flake.lock', 'nix/vendor-rust-src.nix') }}-
+            native-host-v1-${{ runner.os }}-riscv64gc-unknown-scarlet-${{ env.NATIVE_BACKEND }}-${{ steps.identity.outputs.default_scope }}-${{ hashFiles('flake.lock', 'nix/vendor-rust-src.nix') }}-
+            native-host-v1-${{ runner.os }}-aarch64-unknown-scarlet-${{ env.NATIVE_BACKEND }}-${{ steps.identity.outputs.default_scope }}-${{ hashFiles('flake.lock', 'nix/vendor-rust-src.nix') }}-
+
+      # Cargo/bootstrap validate target and source fingerprints after restoring.
+      # A different native target can still reuse the Linux build-host compiler;
+      # prepared sources are replaced with the current recipe before building.
 
       - name: Cross-build Scarlet native compiler using prebuilt LLVM
         id: native-build

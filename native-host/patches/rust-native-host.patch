@@ -1095,30 +1095,129 @@ index 3f88d18aa0b..36b8b90afec 100644
 +
  struct ThreadStart {
 diff --git a/library/std/src/sys/thread_local/key/scarlet.rs b/library/std/src/sys/thread_local/key/scarlet.rs
-index e60f2c5ebd8..4db6f377cc1 100644
+index e60f2c5ebd8..25134610faa 100644
 --- a/library/std/src/sys/thread_local/key/scarlet.rs
 +++ b/library/std/src/sys/thread_local/key/scarlet.rs
-@@ -7,4 +7,9 @@
- const PAGE_SIZE: usize = 4096;
+@@ -8 +7,0 @@
 -const TLS_KEY_COUNT: usize = 128;
- const POINTER_SIZE: usize = mem::size_of::<usize>();
+@@ -9,0 +9,7 @@
 +// Scarlet does not have native ELF TLS yet, so every Rust `thread_local!`
 +// consumes one runtime key. rustc alone exceeds the POSIX-minimum 128 keys.
 +const TLS_KEY_COUNT: usize = 1024;
-+// Spawned threads keep their cleanup record after the complete key table.
++// Preserve the native thread layout: slot zero owns the namespace list, and
++// the cleanup record stays beyond the former inline key table.
 +pub(crate) const TLS_CLEANUP_OFFSET: usize = TLS_KEY_COUNT * POINTER_SIZE;
 +pub(crate) const TLS_MAPPING_SIZE: usize = TLS_CLEANUP_OFFSET + PAGE_SIZE;
- const DTOR_ROUNDS: usize = 4;
-@@ -95,3 +100,3 @@ fn main_tls_base() -> usize {
-         0,
+@@ -13 +18,0 @@
+-static MAIN_TLS_BASE: AtomicUsize = AtomicUsize::new(0);
+@@ -15,0 +21,11 @@
++// Each statically linked copy of std allocates its own key numbers. The address
++// of its destructor table identifies that namespace for the lifetime of the DSO.
++// Slot zero of the thread mapping (never a valid key) owns the list. Keeping the
++// cleanup record at the existing offset also permits the loader and executable
++// to use the same native thread layout. DSOs must remain loaded until thread exit.
++struct Namespace {
++    next: *mut Namespace,
++    dtors: *const [AtomicUsize; TLS_KEY_COUNT],
++    values: [usize; TLS_KEY_COUNT],
++}
++
+@@ -47,0 +64 @@ pub(crate) unsafe fn run_dtors() {
++    let head = ptr::with_exposed_provenance_mut::<*mut Namespace>(tls_base());
+@@ -50,15 +67,16 @@ pub(crate) unsafe fn run_dtors() {
+-        for key in 1..TLS_KEY_COUNT {
+-            let dtor = DTORS[key].load(Ordering::Acquire);
+-            if dtor == 0 {
+-                continue;
+-            }
+-
+-            let value = unsafe { get(key) };
+-            if value.is_null() {
+-                continue;
+-            }
+-
+-            any = true;
+-            unsafe {
+-                set(key, ptr::null_mut());
+-                mem::transmute::<usize, unsafe extern "C" fn(*mut u8)>(dtor)(value);
++        let mut namespace = unsafe { *head };
++        while !namespace.is_null() {
++            for key in 1..TLS_KEY_COUNT {
++                // Do not retain references across callbacks: destructors may
++                // access TLS, replace values, or prepend another namespace.
++                let dtor = unsafe { (*(*namespace).dtors)[key].load(Ordering::Acquire) };
++                let value = unsafe { (*namespace).values[key] };
++                if dtor != 0 && value != 0 {
++                    any = true;
++                    unsafe {
++                        (*namespace).values[key] = 0;
++                        mem::transmute::<usize, unsafe extern "C" fn(*mut u8)>(dtor)(
++                            ptr::with_exposed_provenance_mut(value),
++                        );
++                    }
++                }
+@@ -65,0 +84 @@ pub(crate) unsafe fn run_dtors() {
++            namespace = unsafe { (*namespace).next };
+@@ -71,0 +91,9 @@ pub(crate) unsafe fn run_dtors() {
++    // Values that keep reinstalling themselves after DTOR_ROUNDS have the same
++    // bounded-cleanup behavior as before. Reclaim the per-thread tables; the
++    // thread mapping itself is released by native thread exit / process exit.
++    let mut namespace = unsafe { head.replace(ptr::null_mut()) };
++    while !namespace.is_null() {
++        let next = unsafe { (*namespace).next };
++        unsafe { drop(Box::from_raw(namespace)) };
++        namespace = next;
++    }
+@@ -76 +104 @@ fn tls_slot(key: Key) -> *mut usize {
+-    if key >= TLS_KEY_COUNT {
++    if key == 0 || key >= TLS_KEY_COUNT {
+@@ -79 +107,19 @@ fn tls_slot(key: Key) -> *mut usize {
+-    ptr::with_exposed_provenance_mut::<usize>(tls_base() + key * POINTER_SIZE)
++    let head = ptr::with_exposed_provenance_mut::<*mut Namespace>(tls_base());
++    // The head and list are accessed exclusively by their owning thread. Heap
++    // allocation here uses Scarlet's native allocator, which does not use TLS.
++    unsafe {
++        let mut namespace = *head;
++        while !namespace.is_null() {
++            if (*namespace).dtors == &raw const DTORS {
++                return &raw mut (*namespace).values[key];
++            }
++            namespace = (*namespace).next;
++        }
++        let namespace = Box::into_raw(Box::new(Namespace {
++            next: *head,
++            dtors: &raw const DTORS,
++            values: [0; TLS_KEY_COUNT],
++        }));
++        *head = namespace;
++        &raw mut (*namespace).values[key]
++    }
+@@ -88,5 +133,0 @@ fn main_tls_base() -> usize {
+-    let base = MAIN_TLS_BASE.load(Ordering::Acquire);
+-    if base != 0 {
+-        return base;
+-    }
+-
+@@ -96 +137 @@ fn main_tls_base() -> usize {
 -        PAGE_SIZE,
 +        TLS_MAPPING_SIZE,
-         abi::mmap::PROT_READ | abi::mmap::PROT_WRITE,
-@@ -105,3 +110,3 @@ fn main_tls_base() -> usize {
-         Err(existing) => {
+@@ -103,6 +144,8 @@ fn main_tls_base() -> usize {
+-    match MAIN_TLS_BASE.compare_exchange(0, new_base, Ordering::Release, Ordering::Acquire) {
+-        Ok(_) => new_base,
+-        Err(existing) => {
 -            let _ = abi::memory_unmap(new_base, PAGE_SIZE);
-+            let _ = abi::memory_unmap(new_base, TLS_MAPPING_SIZE);
-             existing
+-            existing
+-        }
++    // Publish in the architectural thread pointer, rather than a std-private
++    // static, so libraries entered on the initial thread share its namespace
++    // list too. Spawned native threads already receive a mapping via SET_TLS.
++    unsafe {
++        #[cfg(target_arch = "aarch64")]
++        core::arch::asm!("msr tpidr_el0, {}", in(reg) new_base, options(nostack));
++        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
++        core::arch::asm!("mv tp, {}", in(reg) new_base, options(nostack));
+@@ -109,0 +153 @@ fn main_tls_base() -> usize {
++    new_base
 diff --git a/library/std/src/sys/thread_local/mod.rs b/library/std/src/sys/thread_local/mod.rs
 index d602f2259a8..320af615c4f 100644
 --- a/library/std/src/sys/thread_local/mod.rs

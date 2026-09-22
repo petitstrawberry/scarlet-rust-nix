@@ -34,6 +34,24 @@ components: they are not needed to run rustc and would otherwise copy the full
 checkout, including foreign-architecture ELF test fixtures, into the runtime
 artifact.
 
+Scarlet's emulated TLS now separates each statically linked std's key namespace.
+The thread pointer owns a list of namespace tables, identified by the address of
+each std's destructor table. This prevents rustc and a loaded proc macro from
+interpreting each other's key 1 (or later keys) as different Rust types. Native
+thread exit runs destructors from all namespaces and frees their tables. Initial
+threads publish their table through the architecture's thread pointer too.
+Libraries remain pinned until process exit, as required by the existing loader.
+Rebuild the complete native toolchain when adopting this runtime change.
+
+The `--proc-macro` mode of Scarlet's `tools/native-rustc/run-qemu.py` builds two
+separate macro DSOs inside the guest, loads both in one rustc process, exercises
+function-like, attribute and derive macros plus thread TLS destruction, then
+runs the generated executable. A build alone does not establish this capability.
+
+Bootstrap caches first use the current branch, then the default branch with the
+same Nix inputs. A cached build for the other native architecture may seed the
+common Linux build-host compiler; Cargo still rebuilds changed target artifacts.
+
 Before bootstrap, a tiny build-host LLVM client is linked and executed using
 `llvm-config --link-static --system-libs`. This checks that the Nix shell exposes
 LLVM's system dependencies (including libxml2) before compiling rustc. Its result
