@@ -450,135 +450,6 @@ index 573f540483b..77bf1c4eaad 100644
  // The fallback when none of the other gates match.
  #[else]
  pub mod os {
-diff --git a/library/std/src/sys/pal/scarlet/common.rs b/library/std/src/sys/pal/scarlet/common.rs
-index d9ef468b6c5..988c4a6ce69 100644
---- a/library/std/src/sys/pal/scarlet/common.rs
-+++ b/library/std/src/sys/pal/scarlet/common.rs
-@@ -5,7 +5,7 @@
-
- // The kernel keeps the initial stack mapped for the life of the process.
- // Publish auxv before calling constructors, which may detect CPU features.
--// A custom entry point that skips `_start` keeps the outline helper's safe
-+// A custom entry point that skips `__scarlet_start` keeps the outline helper's safe
- // LL/SC default unless it performs equivalent auxv and constructor setup.
- static AUXV: AtomicPtr<usize> = AtomicPtr::new(core::ptr::null_mut());
-
-@@ -80,36 +80,39 @@ pub fn abort_internal() -> ! {
-     core::intrinsics::abort();
- }
-
-+// Only the executable's CRT references `main` and linker-defined constructor
-+// boundaries. Keeping those references out of std lets a Rust dylib embed std
-+// without acquiring an entry point or unresolved executable-only symbols.
-+//
-+// SAFETY: The executable CRT passes the persistent kernel argc/argv/envp/auxv
-+// arrays, its C ABI main shim and the linker-defined constructor range. This
-+// function is entered once, before any application code runs.
- #[cfg(not(test))]
- #[unsafe(no_mangle)]
--pub extern "C" fn _start(argc: isize, argv: *const *const c_char) -> ! {
--    unsafe extern "C" {
--        fn main(argc: i32, argv: *const *const c_char) -> i32;
--    }
--
--    let envp = envp_from_argv(argc, argv);
--    if !envp.is_null() {
--        // SAFETY: Scarlet's process ABI puts auxv immediately after the
--        // null-terminated envp array on the initial stack.
--        unsafe {
--            let mut end = envp;
--            while !(*end).is_null() {
--                end = end.add(1);
--            }
--            AUXV.store(end.add(1).cast_mut().cast(), Ordering::Release);
--        }
--    }
-+pub unsafe extern "C" fn __scarlet_start(
-+    argc: isize,
-+    argv: *const *const c_char,
-+    envp: *const *const c_char,
-+    auxv: *const usize,
-+    main: unsafe extern "C" fn(i32, *const *const c_char) -> i32,
-+    init_array_start: *const unsafe extern "C" fn(),
-+    init_array_end: *const unsafe extern "C" fn(),
-+) -> ! {
-+    AUXV.store(auxv.cast_mut(), Ordering::Release);
-     crate::sys::env::init(envp);
-
--    #[cfg(target_arch = "aarch64")]
--    // SAFETY: The ELF linker defines these bounds and the entries are C ABI
--    // constructors. They run after auxv is available and before user main.
--    unsafe {
--        run_init_array()
--    };
-+    // The loader initializes dependency DSOs. Main-image constructors remain
-+    // the executable CRT's responsibility on both Scarlet architectures.
-+    let mut entry = init_array_start;
-+    while entry < init_array_end {
-+        // SAFETY: The CRT supplies the executable's array of C constructors.
-+        unsafe { (*entry)() };
-+        // SAFETY: The next pointer stays within or one past the constructor array.
-+        entry = unsafe { entry.add(1) };
-+    }
-
--    // SAFETY: rustc emits `main` as the C ABI entry shim for normal Rust
--    // executables. It calls `std::rt::lang_start`, which runs `sys::init`.
-+    // SAFETY: rustc's executable main shim calls std::rt::lang_start, which
-+    // initializes process arguments through sys::init before calling user main.
-     let code = unsafe { main(argc as i32, argv) };
-     #[cfg(target_os = "scarlet")]
-     unsafe {
-@@ -125,28 +128,28 @@ pub extern "C" fn _start(argc: isize, argv: *const *const c_char) -> ! {
-     crate::sys::pal::os::exit(code);
- }
-
--#[cfg(target_arch = "aarch64")]
--unsafe fn run_init_array() {
-+// RV32 remains static-only and retains its existing Rust entry. The separate
-+// executable CRT is enabled only for the native 64-bit targets.
-+#[cfg(all(not(test), target_pointer_width = "32"))]
-+#[unsafe(no_mangle)]
-+pub unsafe extern "C" fn _start(argc: isize, argv: *const *const c_char) -> ! {
-     unsafe extern "C" {
--        static __init_array_start: extern "C" fn();
--        static __init_array_end: extern "C" fn();
--    }
--    let mut entry = &raw const __init_array_start;
--    let end = &raw const __init_array_end;
--    while entry < end {
--        // SAFETY: The linker bounds cover an array of function pointers.
--        unsafe { (*entry)() };
--        // SAFETY: The next pointer remains within or one past the array.
--        entry = unsafe { entry.add(1) };
--    }
--}
--
--fn envp_from_argv(argc: isize, argv: *const *const c_char) -> *const *const c_char {
--    if argc < 0 || argv.is_null() {
--        return crate::ptr::null();
-+        fn main(argc: i32, argv: *const *const c_char) -> i32;
-     }
--
--    // SAFETY: The Scarlet process ABI passes a null-terminated argv array,
--    // immediately followed by a null-terminated envp array.
--    unsafe { argv.add(argc as usize + 1) }
-+    let (envp, auxv) = if argc < 0 || argv.is_null() {
-+        (crate::ptr::null(), crate::ptr::null())
-+    } else {
-+        // SAFETY: Scarlet places envp after argv, then auxv after envp's NULL.
-+        unsafe {
-+            let envp = argv.add(argc as usize + 1);
-+            let mut end = envp;
-+            while !(*end).is_null() {
-+                end = end.add(1);
-+            }
-+            (envp, end.add(1).cast())
-+        }
-+    };
-+    // SAFETY: Forward the kernel arrays and rustc's main shim. RV32 previously
-+    // did not run an init array, so its empty constructor range stays unchanged.
-+    unsafe { __scarlet_start(argc, argv, envp, auxv, main, crate::ptr::null(), crate::ptr::null()) }
- }
 diff --git a/library/std/src/sys/pal/scarlet/os.rs b/library/std/src/sys/pal/scarlet/os.rs
 index fb348871251..c240e17a1df 100644
 --- a/library/std/src/sys/pal/scarlet/os.rs
@@ -1227,3 +1098,421 @@ index d602f2259a8..320af615c4f 100644
 -            pub(crate) use scarlet::run_dtors;
 +            pub(crate) use scarlet::{TLS_CLEANUP_OFFSET, TLS_MAPPING_SIZE, run_dtors};
              pub(super) use scarlet::{Key, get, set};
+diff --git a/library/scarlet-abi/src/fs.rs b/library/scarlet-abi/src/fs.rs
+new file mode 100644
+--- /dev/null
++++ b/library/scarlet-abi/src/fs.rs
+@@ -0,0 +1,58 @@
++//! Native filesystem extensions used by Rust std and C/POSIX adapters.
++//!
++//! These operations return nonnegative success values or a negated errno.
++//! Existing filesystem syscalls retain their original -1 error contract.
++
++/// Maximum native pathname storage, including the NUL terminator.
++pub const PATH_MAX: usize = 1024;
++/// Use the current working directory for a relative VfsSetTimes pathname.
++pub const CURRENT_DIRECTORY: usize = usize::MAX;
++
++pub const ERRNO_ENOENT: i32 = 2;
++pub const ERRNO_EACCES: i32 = 13;
++pub const ERRNO_EFAULT: i32 = 14;
++pub const ERRNO_EBUSY: i32 = 16;
++pub const ERRNO_EEXIST: i32 = 17;
++pub const ERRNO_EXDEV: i32 = 18;
++pub const ERRNO_ENOTDIR: i32 = 20;
++pub const ERRNO_EISDIR: i32 = 21;
++pub const ERRNO_ENOSPC: i32 = 28;
++pub const ERRNO_EROFS: i32 = 30;
++pub const ERRNO_ERANGE: i32 = 34;
++pub const ERRNO_ENAMETOOLONG: i32 = 36;
++pub const ERRNO_ENOTEMPTY: i32 = 39;
++pub const ERRNO_ELOOP: i32 = 40;
++pub const ERRNO_EOVERFLOW: i32 = 75;
++
++pub const FILE_TIMES_VERSION: u32 = 1;
++pub const FILE_TIMES_ACCESSED: u32 = 1;
++pub const FILE_TIMES_MODIFIED: u32 = 2;
++/// Do not follow the final symbolic link in VfsSetTimes.
++pub const FILE_TIMES_NOFOLLOW: usize = 1;
++
++/// Partial timestamp update, with seconds since the Unix epoch.
++///
++/// Unselected timestamps are left unchanged. Current native metadata has
++/// second precision; adapters must truncate subsecond input, never round up.
++/// A filesystem must reject unrepresentable values before changing either time.
++#[repr(C, align(8))]
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct RawFileTimes {
++    pub version: u32,
++    pub flags: u32,
++    pub accessed: u64,
++    pub modified: u64,
++}
++
++impl RawFileTimes {
++    pub const fn valid(&self) -> bool {
++        self.version == FILE_TIMES_VERSION
++            && self.flags & !(FILE_TIMES_ACCESSED | FILE_TIMES_MODIFIED) == 0
++    }
++}
++
++const _: () = {
++    assert!(core::mem::size_of::<RawFileTimes>() == 24);
++    assert!(core::mem::offset_of!(RawFileTimes, accessed) == 8);
++    assert!(core::mem::offset_of!(RawFileTimes, modified) == 16);
++};
+diff --git a/library/scarlet-abi/src/lib.rs b/library/scarlet-abi/src/lib.rs
+--- a/library/scarlet-abi/src/lib.rs
++++ b/library/scarlet-abi/src/lib.rs
+@@ -8,0 +9 @@
++pub mod fs;
+@@ -187,0 +189,2 @@
++    FileSetTimes = 303,
++    FileSync = 304,
+@@ -203,0 +207,4 @@
++    VfsCanonicalize = 413,
++    VfsSetTimes = 414,
++    VfsMetadataWithStatus = 415,
++    VfsCreateDirectoryWithStatus = 416,
+diff --git a/library/scarlet-sys/src/lib.rs b/library/scarlet-sys/src/lib.rs
+--- a/library/scarlet-sys/src/lib.rs
++++ b/library/scarlet-sys/src/lib.rs
+@@ -28 +28 @@
+-pub use scarlet_abi::native_scalar;
++pub use scarlet_abi::{fs, native_scalar};
+diff --git a/library/std/src/sys/fs/scarlet.rs b/library/std/src/sys/fs/scarlet.rs
+--- a/library/std/src/sys/fs/scarlet.rs
++++ b/library/std/src/sys/fs/scarlet.rs
+@@ -61 +61,4 @@
+-pub struct FileTimes {}
++pub struct FileTimes {
++    accessed: Option<SystemTime>,
++    modified: Option<SystemTime>,
++}
+@@ -126,2 +129,25 @@
+-    pub fn set_accessed(&mut self, _t: SystemTime) {}
+-    pub fn set_modified(&mut self, _t: SystemTime) {}
++    pub fn set_accessed(&mut self, t: SystemTime) {
++        self.accessed = Some(t);
++    }
++    pub fn set_modified(&mut self, t: SystemTime) {
++        self.modified = Some(t);
++    }
++
++    fn into_raw(self) -> io::Result<abi::filesystem::RawFileTimes> {
++        use abi::filesystem::*;
++        let seconds = |time: SystemTime| {
++            time.sub_time(&UNIX_EPOCH)
++                .map(|duration| duration.as_secs())
++                .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))
++        };
++        let mut raw = RawFileTimes { version: FILE_TIMES_VERSION, ..RawFileTimes::default() };
++        if let Some(time) = self.accessed {
++            raw.accessed = seconds(time)?;
++            raw.flags |= FILE_TIMES_ACCESSED;
++        }
++        if let Some(time) = self.modified {
++            raw.modified = seconds(time)?;
++            raw.flags |= FILE_TIMES_MODIFIED;
++        }
++        Ok(raw)
++    }
+@@ -271 +297 @@
+-        Ok(())
++        abi::file_sync(self.handle)
+@@ -275 +301 @@
+-        Ok(())
++        self.fsync()
+@@ -374,4 +400,2 @@
+-    pub fn set_times(&self, _times: FileTimes) -> io::Result<()> {
+-        // TODO(scarlet): add Native FileObject timestamp mutation once VFS
+-        // filesystems expose timestamp setters.
+-        unsupported()
++    pub fn set_times(&self, times: FileTimes) -> io::Result<()> {
++        abi::file_set_times(self.handle, &times.into_raw()?)
+@@ -434 +458 @@
+-        abi::vfs_create_directory(path.as_ptr().cast()).map_err(|()| io::ErrorKind::Other.into())
++        abi::vfs_create_directory(path.as_ptr().cast())
+@@ -470,10 +494,8 @@
+-pub fn set_times(_path: &Path, _times: FileTimes) -> io::Result<()> {
+-    // TODO(scarlet): add a VFS timestamp mutation syscall once filesystems
+-    // expose timestamp setters.
+-    unsupported()
+-}
+-
+-pub fn set_times_nofollow(_path: &Path, _times: FileTimes) -> io::Result<()> {
+-    // TODO(scarlet): add a no-follow timestamp mutation syscall once filesystems
+-    // expose timestamp setters.
+-    unsupported()
++pub fn set_times(path: &Path, times: FileTimes) -> io::Result<()> {
++    let path = path_to_cstring(path)?;
++    abi::vfs_set_times(path.as_ptr().cast(), &times.into_raw()?, false)
++}
++
++pub fn set_times_nofollow(path: &Path, times: FileTimes) -> io::Result<()> {
++    let path = path_to_cstring(path)?;
++    abi::vfs_set_times(path.as_ptr().cast(), &times.into_raw()?, true)
+@@ -513 +535,2 @@
+-        Err(()) => Ok(false),
++        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
++        Err(error) => Err(error),
+@@ -543 +566 @@
+-    abi::vfs_metadata(path.as_ptr().cast(), &mut metadata).map_err(|()| io::ErrorKind::Other)?;
++    abi::vfs_metadata(path.as_ptr().cast(), &mut metadata)?;
+@@ -550,2 +573 @@
+-    abi::vfs_symlink_metadata(path.as_ptr().cast(), &mut metadata)
+-        .map_err(|()| io::ErrorKind::Other)?;
++    abi::vfs_symlink_metadata(path.as_ptr().cast(), &mut metadata)?;
+@@ -556 +578,5 @@
+-    Ok(if path.is_absolute() { path.to_path_buf() } else { crate::env::current_dir()?.join(path) })
++    let path = path_to_cstring(path)?;
++    let mut buffer = [0; abi::filesystem::PATH_MAX];
++    let len = abi::vfs_canonicalize(path.as_ptr().cast(), &mut buffer)?;
++    let path = str::from_utf8(&buffer[..len]).map_err(|_| io::ErrorKind::InvalidData)?;
++    Ok(PathBuf::from(path))
+@@ -620,2 +646,2 @@
+-    // The Native VFS ABI currently reports only success or failure, so probe
+-    // metadata to distinguish a missing path from other open failures.
++    // Legacy VfsOpen still reports only success or failure. The newer metadata
++    // operation preserves pathname errors; other open failures remain generic.
+@@ -623,4 +649,3 @@
+-    if abi::vfs_metadata(path.as_ptr().cast(), &mut metadata).is_err() {
+-        io::ErrorKind::NotFound.into()
+-    } else {
+-        io::ErrorKind::Other.into()
++    match abi::vfs_metadata(path.as_ptr().cast(), &mut metadata) {
++        Err(error) => error,
++        Ok(()) => io::ErrorKind::Other.into(),
+diff --git a/library/std/src/sys/pal/scarlet/abi.rs b/library/std/src/sys/pal/scarlet/abi.rs
+--- a/library/std/src/sys/pal/scarlet/abi.rs
++++ b/library/std/src/sys/pal/scarlet/abi.rs
+@@ -3 +2,0 @@
+-use scarlet_sys::{Syscall, native_scalar};
+@@ -8 +7 @@
+-    SCTL_SOCKET_SET_WRITE_TIMEOUT_MS, SCTL_SOCKET_TAKE_ERROR,
++    SCTL_SOCKET_SET_WRITE_TIMEOUT_MS, SCTL_SOCKET_TAKE_ERROR, fs as filesystem,
+@@ -9,0 +9 @@
++use scarlet_sys::{Syscall, native_scalar};
+@@ -359,0 +360,52 @@
++fn filesystem_result(value: usize) -> crate::io::Result<usize> {
++    if value > isize::MAX as usize {
++        Err(crate::io::Error::from_raw_os_error((value as isize).wrapping_neg() as i32))
++    } else {
++        Ok(value)
++    }
++}
++
++pub(crate) fn file_set_times(
++    handle: usize,
++    times: &filesystem::RawFileTimes,
++) -> crate::io::Result<()> {
++    filesystem_result(scarlet_sys::syscall2(
++        Syscall::FileSetTimes,
++        handle,
++        times as *const _ as usize,
++    ))
++    .map(drop)
++}
++
++pub(crate) fn file_sync(handle: usize) -> crate::io::Result<()> {
++    filesystem_result(scarlet_sys::syscall1(Syscall::FileSync, handle)).map(drop)
++}
++
++pub(crate) fn vfs_set_times(
++    path: *const u8,
++    times: &filesystem::RawFileTimes,
++    no_follow: bool,
++) -> crate::io::Result<()> {
++    filesystem_result(scarlet_sys::syscall4(
++        Syscall::VfsSetTimes,
++        path as usize,
++        times as *const _ as usize,
++        if no_follow { filesystem::FILE_TIMES_NOFOLLOW } else { 0 },
++        filesystem::CURRENT_DIRECTORY,
++    ))
++    .map(drop)
++}
++
++pub(crate) fn vfs_canonicalize(path: *const u8, buffer: &mut [u8]) -> crate::io::Result<usize> {
++    let len = filesystem_result(scarlet_sys::syscall3(
++        Syscall::VfsCanonicalize,
++        path as usize,
++        buffer.as_mut_ptr() as usize,
++        buffer.len(),
++    ))?;
++    if len == 0 || len > buffer.len() {
++        return Err(crate::io::ErrorKind::InvalidData.into());
++    }
++    Ok(len)
++}
++
+@@ -378,3 +430,3 @@
+-pub fn vfs_create_directory(path: *const u8) -> Result<(), ()> {
+-    let ret = scarlet_sys::syscall1(Syscall::VfsCreateDirectory, path as usize);
+-    if ret == SYSCALL_ERROR { Err(()) } else { Ok(()) }
++pub fn vfs_create_directory(path: *const u8) -> crate::io::Result<()> {
++    filesystem_result(scarlet_sys::syscall1(Syscall::VfsCreateDirectoryWithStatus, path as usize))
++        .map(drop)
+@@ -434,3 +486,6 @@
+-pub(crate) fn vfs_metadata(path: *const u8, metadata: &mut RawFileMetadata) -> Result<(), ()> {
+-    let ret = scarlet_sys::syscall2(
+-        Syscall::VfsMetadata,
++pub(crate) fn vfs_metadata(
++    path: *const u8,
++    metadata: &mut RawFileMetadata,
++) -> crate::io::Result<()> {
++    let ret = scarlet_sys::syscall3(
++        Syscall::VfsMetadataWithStatus,
+@@ -439,8 +494,12 @@
+-    );
+-    if ret == SYSCALL_ERROR { Err(()) } else { Ok(()) }
+-}
+-
+-#[inline]
+-pub(crate) fn vfs_symlink_metadata(path: *const u8, metadata: &mut RawFileMetadata) -> Result<(), ()> {
+-    let ret = scarlet_sys::syscall2(
+-        Syscall::VfsSymlinkMetadata,
++        0,
++    );
++    filesystem_result(ret).map(drop)
++}
++
++#[inline]
++pub(crate) fn vfs_symlink_metadata(
++    path: *const u8,
++    metadata: &mut RawFileMetadata,
++) -> crate::io::Result<()> {
++    let ret = scarlet_sys::syscall3(
++        Syscall::VfsMetadataWithStatus,
+@@ -449,2 +508,3 @@
+-    );
+-    if ret == SYSCALL_ERROR { Err(()) } else { Ok(()) }
++        1,
++    );
++    filesystem_result(ret).map(drop)
+diff --git a/library/std/src/sys/pal/scarlet/common.rs b/library/std/src/sys/pal/scarlet/common.rs
+--- a/library/std/src/sys/pal/scarlet/common.rs
++++ b/library/std/src/sys/pal/scarlet/common.rs
+@@ -8 +8 @@
+-// A custom entry point that skips `_start` keeps the outline helper's safe
++// A custom entry point that skips `__scarlet_start` keeps the outline helper's safe
+@@ -57,0 +58 @@
++    use scarlet_sys::fs::*;
+@@ -58,0 +60,11 @@
++        ERRNO_ENOENT => crate::io::ErrorKind::NotFound,
++        ERRNO_EACCES => crate::io::ErrorKind::PermissionDenied,
++        ERRNO_EEXIST => crate::io::ErrorKind::AlreadyExists,
++        ERRNO_ENOTDIR => crate::io::ErrorKind::NotADirectory,
++        ERRNO_EISDIR => crate::io::ErrorKind::IsADirectory,
++        ERRNO_ENOSPC => crate::io::ErrorKind::StorageFull,
++        ERRNO_EROFS => crate::io::ErrorKind::ReadOnlyFilesystem,
++        ERRNO_ENAMETOOLONG => crate::io::ErrorKind::InvalidFilename,
++        ERRNO_ENOTEMPTY => crate::io::ErrorKind::DirectoryNotEmpty,
++        ERRNO_ELOOP => crate::io::ErrorKind::FilesystemLoop,
++        ERRNO_EOVERFLOW => crate::io::ErrorKind::FileTooLarge,
+@@ -82,0 +95,7 @@
++// Only the executable's CRT references `main` and linker-defined constructor
++// boundaries. Keeping those references out of std lets a Rust dylib embed std
++// without acquiring an entry point or unresolved executable-only symbols.
++//
++// SAFETY: The executable CRT passes the persistent kernel argc/argv/envp/auxv
++// arrays, its C ABI main shim and the linker-defined constructor range. This
++// function is entered once, before any application code runs.
+@@ -85,3 +104,20 @@
+-pub extern "C" fn _start(argc: isize, argv: *const *const c_char) -> ! {
+-    unsafe extern "C" {
+-        fn main(argc: i32, argv: *const *const c_char) -> i32;
++pub unsafe extern "C" fn __scarlet_start(
++    argc: isize,
++    argv: *const *const c_char,
++    envp: *const *const c_char,
++    auxv: *const usize,
++    main: unsafe extern "C" fn(i32, *const *const c_char) -> i32,
++    init_array_start: *const unsafe extern "C" fn(),
++    init_array_end: *const unsafe extern "C" fn(),
++) -> ! {
++    AUXV.store(auxv.cast_mut(), Ordering::Release);
++    crate::sys::env::init(envp);
++
++    // The loader initializes dependency DSOs. Main-image constructors remain
++    // the executable CRT's responsibility on both Scarlet architectures.
++    let mut entry = init_array_start;
++    while entry < init_array_end {
++        // SAFETY: The CRT supplies the executable's array of C constructors.
++        unsafe { (*entry)() };
++        // SAFETY: The next pointer stays within or one past the constructor array.
++        entry = unsafe { entry.add(1) };
+@@ -90,23 +126,2 @@
+-    let envp = envp_from_argv(argc, argv);
+-    if !envp.is_null() {
+-        // SAFETY: Scarlet's process ABI puts auxv immediately after the
+-        // null-terminated envp array on the initial stack.
+-        unsafe {
+-            let mut end = envp;
+-            while !(*end).is_null() {
+-                end = end.add(1);
+-            }
+-            AUXV.store(end.add(1).cast_mut().cast(), Ordering::Release);
+-        }
+-    }
+-    crate::sys::env::init(envp);
+-
+-    #[cfg(target_arch = "aarch64")]
+-    // SAFETY: The ELF linker defines these bounds and the entries are C ABI
+-    // constructors. They run after auxv is available and before user main.
+-    unsafe {
+-        run_init_array()
+-    };
+-
+-    // SAFETY: rustc emits `main` as the C ABI entry shim for normal Rust
+-    // executables. It calls `std::rt::lang_start`, which runs `sys::init`.
++    // SAFETY: rustc's executable main shim calls std::rt::lang_start, which
++    // initializes process arguments through sys::init before calling user main.
+@@ -128,2 +143,5 @@
+-#[cfg(target_arch = "aarch64")]
+-unsafe fn run_init_array() {
++// RV32 remains static-only and retains its existing Rust entry. The separate
++// executable CRT is enabled only for the native 64-bit targets.
++#[cfg(all(not(test), target_pointer_width = "32"))]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn _start(argc: isize, argv: *const *const c_char) -> ! {
+@@ -131,2 +149 @@
+-        static __init_array_start: extern "C" fn();
+-        static __init_array_end: extern "C" fn();
++        fn main(argc: i32, argv: *const *const c_char) -> i32;
+@@ -134,8 +151,16 @@
+-    let mut entry = &raw const __init_array_start;
+-    let end = &raw const __init_array_end;
+-    while entry < end {
+-        // SAFETY: The linker bounds cover an array of function pointers.
+-        unsafe { (*entry)() };
+-        // SAFETY: The next pointer remains within or one past the array.
+-        entry = unsafe { entry.add(1) };
+-    }
++    let (envp, auxv) = if argc < 0 || argv.is_null() {
++        (crate::ptr::null(), crate::ptr::null())
++    } else {
++        // SAFETY: Scarlet places envp after argv, then auxv after envp's NULL.
++        unsafe {
++            let envp = argv.add(argc as usize + 1);
++            let mut end = envp;
++            while !(*end).is_null() {
++                end = end.add(1);
++            }
++            (envp, end.add(1).cast())
++        }
++    };
++    // SAFETY: Forward the kernel arrays and rustc's main shim. RV32 previously
++    // did not run an init array, so its empty constructor range stays unchanged.
++    unsafe { __scarlet_start(argc, argv, envp, auxv, main, crate::ptr::null(), crate::ptr::null()) }
+@@ -143,10 +167,0 @@
+-
+-fn envp_from_argv(argc: isize, argv: *const *const c_char) -> *const *const c_char {
+-    if argc < 0 || argv.is_null() {
+-        return crate::ptr::null();
+-    }
+-
+-    // SAFETY: The Scarlet process ABI passes a null-terminated argv array,
+-    // immediately followed by a null-terminated envp array.
+-    unsafe { argv.add(argc as usize + 1) }
+-}

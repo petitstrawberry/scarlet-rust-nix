@@ -48,6 +48,24 @@ separate macro DSOs inside the guest, loads both in one rustc process, exercises
 function-like, attribute and derive macros plus thread TLS destruction, then
 runs the generated executable. A build alone does not establish this capability.
 
+The filesystem overlay requires Scarlet's Native operations 303/304 and 413–416:
+descriptor/path timestamp updates, file sync, canonicalization, and metadata/mkdir
+with detailed errors. The updated std resolves canonical paths through VFS,
+preserves error kinds for `create_dir_all` and `try_exists`, and performs real
+`FileTimes` and `sync_all` operations. Legacy kernel operations keep their old
+error convention; an older kernel is not sufficient for this sysroot.
+
+Scarlet's `tools/native-rustc` probe can be built with `--features native-fs` and
+run with `--native-fs --proc-macro`. The AArch64 release-kernel HVF acceptance
+checks both ext2 and tmpfs, actual C realpath/timestamp/sync adapters, symlink and
+mount traversal, persistence, and the existing std/proc-macro compile-and-run
+path. See Scarlet's `docs/development/native-rustc.md` and its
+`2026-09-22-native-fs-aarch64` evidence. The local check rebuilt the target std
+and reused the compatible previous local compiler; a full Actions rebuild and
+guest acceptance are still required before updating the published bundle.
+The initial C library does not yet supply Cargo's complete native dependency
+closure. The target remains outside `cfg(unix)`.
+
 Bootstrap caches first use the current branch, then the default branch with the
 same Nix inputs. A cached build for the other native architecture may seed the
 common Linux build-host compiler; Cargo still rebuilds changed target artifacts.
