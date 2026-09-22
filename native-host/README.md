@@ -43,6 +43,26 @@ threads publish their table through the architecture's thread pointer too.
 Libraries remain pinned until process exit, as required by the existing loader.
 Rebuild the complete native toolchain when adopting this runtime change.
 
+The std allocator overlay aligns split free blocks to their header alignment.
+Previously, an odd-sized allocation could place a `Block` at an unaligned
+address even though the returned user pointer was aligned. The fix preserves
+valid near-end allocations by consuming the whole block when rounding its end
+would exceed the block boundary or overflow.
+
+After source preparation and before bootstrap, the build executes
+`scripts/check-native-host-allocator.py` with the pinned build-host rustc. It extracts
+the real patched allocator's `Block`, constants and placement helpers, then
+checks odd sizes, alignment, address/size overflow and exact/near-end fits.
+`allocator-regression.log` records the source hash and test result. This host
+test does not execute native `sbrk`, concurrency or the complete allocator;
+native guest stress checks remain required. To run it against a prepared tree:
+
+```sh
+python3 scripts/check-native-host-allocator.py \
+  /path/to/prepared-source/library/std/src/sys/alloc/scarlet.rs \
+  --rustc "$SCARLET_BOOTSTRAP/bin/rustc"
+```
+
 The `--proc-macro` mode of Scarlet's `tools/native-rustc/run-qemu.py` builds two
 separate macro DSOs inside the guest, loads both in one rustc process, exercises
 function-like, attribute and derive macros plus thread TLS destruction, then
