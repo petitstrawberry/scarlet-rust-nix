@@ -26,7 +26,10 @@ def apply_patch(source, patch, *, check_only=False):
                    if key not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
     environment["GIT_CEILING_DIRECTORIES"] = str(source.resolve().parent)
     for options in ([["--check"]] if check_only else [["--check"], []]):
-        subprocess.run(["git", "apply", *options, str(patch)], cwd=source,
+        # Source overlays include exact, context-free hunks generated against
+        # recipe.base_rust_revision. Git otherwise rejects interior zero-context
+        # hunks even when their old lines match the pinned source exactly.
+        subprocess.run(["git", "apply", "--unidiff-zero", *options, str(patch)], cwd=source,
                        env=environment, check=True)
 
 

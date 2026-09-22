@@ -12,6 +12,23 @@ spec.loader.exec_module(prepare)
 
 
 class PatchTests(unittest.TestCase):
+    def test_context_free_interior_hunk_checks_and_applies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            source.mkdir()
+            target = source / "tls.rs"
+            target.write_text("first\nconst KEYS: usize = 128;\nlast\n")
+            patch = Path(tmp) / "tls.patch"
+            patch.write_text("diff --git a/tls.rs b/tls.rs\n"
+                             "--- a/tls.rs\n+++ b/tls.rs\n"
+                             "@@ -2 +2 @@\n"
+                             "-const KEYS: usize = 128;\n"
+                             "+const KEYS: usize = 1024;\n")
+            prepare.apply_patch(source, patch, check_only=True)
+            self.assertIn("= 128;", target.read_text())
+            prepare.apply_patch(source, patch)
+            self.assertEqual(target.read_text(), "first\nconst KEYS: usize = 1024;\nlast\n")
+
     def test_patch_applies_to_nested_source_and_dependency_without_touching_parent(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
