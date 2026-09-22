@@ -1,0 +1,71 @@
+diff --git a/libwild/src/args.rs b/libwild/src/args.rs
+index 346b8ce..01db0e1 100644
+--- a/libwild/src/args.rs
++++ b/libwild/src/args.rs
+@@ -56,0 +57,14 @@ pub(crate) const WRITE_VERIFY_ALLOCATIONS_ENV: &str = "WILD_VERIFY_ALLOCATIONS";
++/// The command name used to invoke the linker. The Scarlet toolchain exposes
++/// this binary as `rust-lld`, while retaining `wild` as the implementation
++/// command for diagnostics and provenance.
++pub(crate) fn linker_program_name() -> String {
++    std::env::args_os()
++        .next()
++        .as_deref()
++        .and_then(|arg| Path::new(arg).file_name())
++        .and_then(|name| name.to_str())
++        .filter(|name| !name.is_empty())
++        .unwrap_or("wild")
++        .to_owned()
++}
++
+@@ -366 +380,9 @@ impl CommonArgs {
+-        format!("Wild {} (compatible with GNU linkers)", self.version)
++        let program_name = linker_program_name();
++        if program_name == "wild" {
++            format!("Wild {} (compatible with GNU linkers)", self.version)
++        } else {
++            format!(
++                "{program_name} (Wild {}; compatible with GNU linkers)",
++                self.version
++            )
++        }
+@@ -814 +836,5 @@ impl<T: platform::Args> ArgumentParser<T> {
+-        help.push_str("USAGE:\n    wild [OPTIONS] [FILES...]\n\nOPTIONS:\n");
++        let program_name = linker_program_name();
++        let hide_implementation_options = program_name == "rust-lld";
++        help.push_str(&format!(
++            "USAGE:\n    {program_name} [OPTIONS] [FILES...]\n\nOPTIONS:\n"
++        ));
+@@ -829,0 +856,3 @@ impl<T: platform::Args> ArgumentParser<T> {
++            if hide_implementation_options && long_name.starts_with("wild-") {
++                continue;
++            }
+diff --git a/libwild/src/args/elf.rs b/libwild/src/args/elf.rs
+index 889fbf5..7945bd6 100644
+--- a/libwild/src/args/elf.rs
++++ b/libwild/src/args/elf.rs
+@@ -868,2 +868,3 @@ fn setup_argument_parser() -> ArgumentParser<ElfArgs> {
+-            writeln!(stdout, "wild: supported targets: elf64-x86-64 elf64-littleaarch64 elf64-littleriscv elf64-loongarch")?;
+-            writeln!(stdout, "wild: supported emulations: elf_x86_64 aarch64elf elf64lriscv elf64loongarch")?;
++            let program_name = super::linker_program_name();
++            writeln!(stdout, "{program_name}: supported targets: elf64-x86-64 elf64-littleaarch64 elf64-littleriscv elf64-loongarch")?;
++            writeln!(stdout, "{program_name}: supported emulations: elf_x86_64 aarch64elf elf64lriscv elf64loongarch")?;
+diff --git a/libwild/src/error.rs b/libwild/src/error.rs
+index 30956d0..699a543 100644
+--- a/libwild/src/error.rs
++++ b/libwild/src/error.rs
+@@ -108 +108,7 @@ impl Display for Warning {
+-        write!(f, "wild: {} {}", "warning:".yellow(), self.message)
++        write!(
++            f,
++            "{}: {} {}",
++            crate::args::linker_program_name(),
++            "warning:".yellow(),
++            self.message
++        )
+@@ -195 +201,5 @@ pub fn report_error(error: &Error) {
+-    eprintln!("wild: {}: {error:?}", "error".red());
++    eprintln!(
++        "{}: {}: {error:?}",
++        crate::args::linker_program_name(),
++        "error".red()
++    );

@@ -26,12 +26,32 @@ git -C "$source_dir" checkout -q --detach FETCH_HEAD
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$revision"
 git -C "$source_dir" apply --check "$repo_root/native-linker/wild-scarlet.patch"
 git -C "$source_dir" apply "$repo_root/native-linker/wild-scarlet.patch"
+git -C "$source_dir" apply --check --unidiff-zero "$repo_root/native-linker/rust-lld-identity.patch"
+git -C "$source_dir" apply --unidiff-zero "$repo_root/native-linker/rust-lld-identity.patch"
 export CARGO_TARGET_DIR="$work/target" RUSTC="$SCARLET_TOOLCHAIN/bin/rustc"
 export CARGO_PROFILE_OPT_OPT_LEVEL=2 CARGO_NET_OFFLINE=false
 cargo="$SCARLET_TOOLCHAIN/bin/cargo"
 # Exercise the same buffered input/output and Scarlet ELF header path on Linux.
 "$cargo" build --manifest-path "$source_dir/Cargo.toml" --locked --profile opt \
     -p wild-linker --no-default-features --features scarlet 2>&1 | tee "$output/host-build.log"
+ln -sf wild "$CARGO_TARGET_DIR/opt/rust-lld"
+"$CARGO_TARGET_DIR/opt/rust-lld" --help > "$output/rust-lld-help.txt"
+grep -Fq '    rust-lld [OPTIONS] [FILES...]' "$output/rust-lld-help.txt"
+grep -Fq 'rust-lld: supported targets:' "$output/rust-lld-help.txt"
+if grep -Fiq 'wild' "$output/rust-lld-help.txt"; then
+    echo 'rust-lld help exposes the Wild implementation identity' >&2
+    exit 1
+fi
+"$CARGO_TARGET_DIR/opt/rust-lld" --version > "$output/rust-lld-version.txt"
+grep -Fq 'rust-lld (Wild ' "$output/rust-lld-version.txt"
+if "$CARGO_TARGET_DIR/opt/rust-lld" --definitely-invalid > "$output/rust-lld-error.txt" 2>&1; then
+    echo 'rust-lld unexpectedly accepted an invalid option' >&2
+    exit 1
+fi
+grep -Fq 'rust-lld: error:' "$output/rust-lld-error.txt"
+"$CARGO_TARGET_DIR/opt/wild" --help > "$output/wild-help.txt"
+grep -Fq '    wild [OPTIONS] [FILES...]' "$output/wild-help.txt"
+grep -Fq -- '--wild-experiments' "$output/wild-help.txt"
 python3 "$repo_root/native-linker/check.py" --target "$target" \
     --output "$output/fixtures" --linker "$CARGO_TARGET_DIR/opt/wild" 2>&1 | tee "$output/host-check.log"
 # Apply these flags only to target crates, leaving build scripts/proc macros on Linux.
@@ -62,10 +82,13 @@ target = os.environ['NATIVE_LINKER_TARGET']
 for binary in (package / 'bin').iterdir():
     check.audit(binary, target)
 manifest = json.loads((repo / 'native-linker/recipe.json').read_text())
+base_patch = repo / 'native-linker/wild-scarlet.patch'
+identity_patch = repo / 'native-linker/rust-lld-identity.patch'
 manifest.update(target=target, github_run_id=os.environ.get('GITHUB_RUN_ID'),
                 packaging_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
                 status='built-not-guest-verified', guest_verified=False,
-                patch_sha256=hashlib.sha256((repo / 'native-linker/wild-scarlet.patch').read_bytes()).hexdigest(),
+                patch_sha256=hashlib.sha256(base_patch.read_bytes()).hexdigest(),
+                rust_lld_identity_patch_sha256=hashlib.sha256(identity_patch.read_bytes()).hexdigest(),
                 files={str(p.relative_to(package)): hashlib.sha256(p.read_bytes()).hexdigest()
                        for p in package.rglob('*') if p.is_file()})
 for path in (out / 'manifest.json', package / 'manifest.json'):

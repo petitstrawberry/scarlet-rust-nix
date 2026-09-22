@@ -39,9 +39,9 @@ jobs:
           path: |
             ~/.cargo/registry
             .native-linker-work/target
-          key: native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/wild-scarlet.patch') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/*.patch') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/wild-scarlet.patch') }}-
+            native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/*.patch') }}-
             native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'native-linker/recipe.json') }}-
       - name: Get prebuilt cross compiler and LLVM tools
         run: nix build .#scarlet-rust-toolchain .#scarlet-clang .#scarlet-llvm .#scarlet-lld --no-link --max-jobs 0 --accept-flake-config
@@ -66,6 +66,7 @@ jobs:
           name: native-linker-evidence-${{ matrix.target }}
           path: |
             native-linker-output/*.log
+            native-linker-output/*.txt
             native-linker-output/manifest.json
           if-no-files-found: warn
       - name: Upload native linker and guest probe
