@@ -4,6 +4,12 @@ This ports Wild 0.9.0 at the exact revision in `recipe.json`. It produces `wild`
 a build-time linker that combines objects and archives into ELF executables.
 Scarlet's separate `scarlet-ld` loads shared objects at runtime.
 
+The native toolchain also exposes this binary through `rust-lld`. A separate
+identity patch makes that alias print `rust-lld` in usage and diagnostics and
+hides Wild-only experimental switches from its help. The direct `wild` command
+keeps the complete upstream interface, and `rust-lld --version` still attributes
+the implementation to Wild.
+
 The port uses owned input buffers, buffered output, and one current-thread Rayon
 worker by default. Native outputs carry Scarlet ELF OSABI 83. It omits libc,
 C zstd, fork and linker plugins. Perfetto is an optional dependency instead of
