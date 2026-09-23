@@ -3,7 +3,7 @@
 
 The Rust compiler and standard-library changes live in the Scarlet Rust fork.
 This changes only --source; it never patches registry caches or an installed
-compiler. Dependency inputs are recorded by SHA-256.
+compiler. Dependency inputs are recorded by SHA-256 or an exact Git commit.
 """
 import argparse
 import hashlib
@@ -46,6 +46,27 @@ def find_package(vendor, name, version):
     return matches[0]
 
 
+def fetch_package(destination, package):
+    source = package["git"]
+    destination.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(destination)], check=True)
+    subprocess.run(["git", "-C", str(destination), "remote", "add", "origin", source["url"]],
+                   check=True)
+    subprocess.run(["git", "-C", str(destination), "fetch", "--depth", "1", "origin",
+                    source["revision"]], check=True)
+    subprocess.run(["git", "-C", str(destination), "checkout", "-q", "--detach", "FETCH_HEAD"],
+                   check=True)
+    revision = subprocess.check_output(["git", "-C", str(destination), "rev-parse", "HEAD"],
+                                      text=True).strip()
+    if revision != source["revision"]:
+        raise ValueError(f'wrong {package["name"]} fork revision: {revision}')
+    manifest = tomllib.loads((destination / "Cargo.toml").read_text())["package"]
+    if (manifest["name"], manifest["version"]) != (package["name"], package["version"]):
+        raise ValueError(f'wrong {package["name"]} fork package/version')
+    shutil.rmtree(destination / ".git")
+    return {"repository": source["url"], "revision": revision}
+
+
 def prepare(source, inputs, cargo=None):
     source = source.resolve(strict=True)
     inputs = inputs.resolve(strict=True)
@@ -61,10 +82,16 @@ def prepare(source, inputs, cargo=None):
     recipe = json.loads((inputs / "recipe.json").read_text())
     records = []
     for package in recipe["packages"]:
-        package["source"] = find_package(source / "vendor", package["name"], package["version"])
+        if "git" not in package:
+            package["source"] = find_package(source / "vendor", package["name"], package["version"])
     for package in recipe["packages"]:
         destination = source / "native-host-deps" / f'{package["name"]}-{package["version"]}'
-        shutil.copytree(package["source"], destination, ignore=shutil.ignore_patterns(".git", ".cargo-checksum.json", ".cargo-ok", ".cargo_vcs_info.json"))
+        if "git" in package:
+            records.append(fetch_package(destination, package))
+        else:
+            shutil.copytree(package["source"], destination,
+                            ignore=shutil.ignore_patterns(".git", ".cargo-checksum.json",
+                                                                  ".cargo-ok", ".cargo_vcs_info.json"))
         for operation in package["operations"]:
             input_file = inputs / operation["input"]
             records.append({"path": str(input_file.relative_to(inputs)), "sha256": sha256(input_file)})

@@ -51,12 +51,11 @@
       "name": "target-lexicon",
       "version": "0.13.3",
       "root_patch": null,
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/target-lexicon-0.13.3-scarlet.patch"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/target-lexicon.git",
+        "revision": "45d40252406452ef3a953dd623a8968020d7f5bf"
+      },
+      "operations": []
     },
     {
       "name": "tempfile",

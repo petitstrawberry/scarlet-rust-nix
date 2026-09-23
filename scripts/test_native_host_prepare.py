@@ -32,27 +32,36 @@ class PatchTests(unittest.TestCase):
             backend.parent.mkdir(parents=True)
             backend.write_text("[patch.crates-io]\n# existing section\n")
             (source / "Cargo.toml").write_text("[workspace]\n")
-            vendor = source / "vendor/target-lexicon-0.13.3"
-            vendor.mkdir(parents=True)
-            (vendor / "Cargo.toml").write_text('[package]\nname = "target-lexicon"\nversion = "0.13.3"\n')
-            (vendor / "triple.txt").write_text("before\n")
-            (inputs / "patches").mkdir(parents=True)
-            (inputs / "patches/lexicon.patch").write_text(
-                "diff --git a/triple.txt b/triple.txt\n"
-                "--- a/triple.txt\n+++ b/triple.txt\n"
-                "@@ -1 +1 @@\n-before\n+after\n")
+            (source / "vendor").mkdir()
+            lexicon_fork = root / "lexicon-fork"
+            lexicon_fork.mkdir()
+            (lexicon_fork / "Cargo.toml").write_text(
+                '[package]\nname = "target-lexicon"\nversion = "0.13.3"\n')
+            (lexicon_fork / "triple.txt").write_text("scarlet\n")
+            subprocess.run(["git", "init", "-q", str(lexicon_fork)], check=True)
+            subprocess.run(["git", "-C", str(lexicon_fork), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(lexicon_fork), "-c", "user.name=Test",
+                            "-c", "user.email=test@example.invalid", "commit", "-qm",
+                            "Scarlet triple"], check=True)
+            revision = subprocess.check_output(["git", "-C", str(lexicon_fork), "rev-parse",
+                                                "HEAD"], text=True).strip()
+            inputs.mkdir()
             (inputs / "recipe.json").write_text(json.dumps({"packages": [{
                 "name": "target-lexicon", "version": "0.13.3", "root_patch": None,
-                "operations": [{"kind": "patch", "input": "patches/lexicon.patch"}],
+                "git": {"url": str(lexicon_fork), "revision": revision},
+                "operations": [],
             }]}))
             with mock.patch.dict(os.environ, {"SCARLET_RUST_REV": "a" * 40}):
                 prepare.prepare(source, inputs)
             self.assertEqual(target.read_text(), "fork-owned source stays unchanged\n")
-            self.assertEqual((source / "native-host-deps/target-lexicon-0.13.3/triple.txt").read_text(), "after\n")
+            self.assertEqual((source / "native-host-deps/target-lexicon-0.13.3/triple.txt").read_text(), "scarlet\n")
+            self.assertFalse((source / "native-host-deps/target-lexicon-0.13.3/.git").exists())
             self.assertIn('target-lexicon = { path = "../../native-host-deps/target-lexicon-0.13.3" }',
                           backend.read_text())
-            self.assertEqual(json.loads((source / ".scarlet-native-host-prepared.json").read_text())
-                             ["rust_revision"], "a" * 40)
+            marker = json.loads((source / ".scarlet-native-host-prepared.json").read_text())
+            self.assertEqual(marker["rust_revision"], "a" * 40)
+            self.assertEqual(marker["inputs"], [{"repository": str(lexicon_fork),
+                                                  "revision": revision}])
 
     def test_context_free_interior_hunk_checks_and_applies(self):
         with tempfile.TemporaryDirectory() as tmp:

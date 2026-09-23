@@ -15,8 +15,10 @@ Scarlet ELF outputs with OSABI83 after checking the ELF architecture/type; the
 packager does not relabel foreign executables. Executable startup CRT objects
 may retain generic ELF OSABI0.
 
-Dependency patches cover libloading0.8.9/0.9.0, stacker0.1.21, target-lexicon0.13.3,
-tempfile3.23.0, and getrandom0.3.3. The getrandom backend requires actual registered
+Dependency patches cover libloading0.8.9/0.9.0, stacker0.1.21,
+tempfile3.23.0, and getrandom0.3.3. Cranelift uses the pinned
+[Scarlet target-lexicon fork](https://github.com/petitstrawberry/target-lexicon)
+to recognize Scarlet triples. The getrandom backend requires actual registered
 entropy (for QEMU, VirtIO RNG); it never accepts Scarlet's pseudo-random fallback.
 The initial stacker backend uses aligned allocations without guard pages.
 Tempfile supports native named creation and keeping/overwrite rename; unsupported
