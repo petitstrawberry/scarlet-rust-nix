@@ -41,6 +41,12 @@ let
   targetConfigureFlags = lib.concatMap (target: [
     "--set=target.${target}.optimized-compiler-builtins=false"
   ]) noOptimizedCompilerBuiltinsTargetTriples;
+  startupCompilerFlags = lib.concatMap (target: [
+    "--set=target.${target}.cc=${lib.getExe' llvmPackages.clang-unwrapped "clang"}"
+  ]) (lib.filter (target:
+    lib.hasSuffix "-unknown-scarlet" target
+    && (lib.hasPrefix "aarch64-" target || lib.hasPrefix "riscv64" target)
+  ) targetTriples);
 
   baseRustc = callPackage "${nixpkgsPath}/pkgs/development/compilers/rust/rustc.nix" {
     inherit version;
@@ -104,7 +110,8 @@ baseRustc.overrideAttrs (old: {
       "--target=${targetList}"
       "--tools=${toolchainToolList}"
     ]
-    ++ targetConfigureFlags;
+    ++ targetConfigureFlags
+    ++ startupCompilerFlags;
 
   postPatch = ''
     patchShebangs src/etc
