@@ -41,8 +41,10 @@ let
   targetConfigureFlags = lib.concatMap (target: [
     "--set=target.${target}.optimized-compiler-builtins=false"
   ]) noOptimizedCompilerBuiltinsTargetTriples;
-  startupCompilerFlags = lib.concatMap (target: [
+  startupToolFlags = lib.concatMap (target: [
     "--set=target.${target}.cc=${lib.getExe' llvmPackages.clang-unwrapped "clang"}"
+    "--set=target.${target}.linker=${lib.getExe' llvmPackages.lld "lld"}"
+    "--set=target.${target}.rpath=false"
   ]) (lib.filter (target:
     lib.hasSuffix "-unknown-scarlet" target
     && (lib.hasPrefix "aarch64-" target || lib.hasPrefix "riscv64" target)
@@ -111,7 +113,7 @@ baseRustc.overrideAttrs (old: {
       "--tools=${toolchainToolList}"
     ]
     ++ targetConfigureFlags
-    ++ startupCompilerFlags;
+    ++ startupToolFlags;
 
   postPatch = ''
     patchShebangs src/etc
