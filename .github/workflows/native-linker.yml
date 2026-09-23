@@ -1,10 +1,8 @@
 name: Build Scarlet Native Linker
 
 on:
-  # PR updates run once. Also running on push produces duplicate cancelled checks
-  # for the same commit and can hold the concurrency slot for several minutes.
-  pull_request:
-    paths: ['native-linker/**', 'scripts/*native-linker*', '.github/workflows/native-linker.yml', 'flake.nix', 'nix/vendor-rust-src.nix']
+  # The main toolchain workflow calls this only after publishing its cache.
+  workflow_call:
   workflow_dispatch:
 
 permissions:

@@ -183,6 +183,9 @@ unavailable. The fixed vendored Rust source is copied out of the Nix store befor
 preparing the `native-host/` dependency adaptations.
 
 Relevant pull requests build AArch64.
+The main toolchain workflow first builds and uploads the cross toolchain, then
+runs the affected native-host and native-linker jobs. Its final CI check waits
+for all required artifacts; native jobs cannot race an empty Cachix cache.
 Once the workflow is available on the repository default branch, it can also be
 started manually for AArch64 or RISC-V64:
 

@@ -12,15 +12,15 @@ on:
         required: true
         type: string
       native_host_aarch64_run:
-        description: Successful native-host.yml run containing the AArch64 artifact
+        description: Successful Actions run containing the AArch64 native-host artifact
         required: true
         type: string
       native_host_riscv64_run:
-        description: Successful native-host.yml run containing the RV64 artifact
+        description: Successful Actions run containing the RV64 native-host artifact
         required: true
         type: string
       native_linker_run:
-        description: Successful native-linker.yml run containing both Wild artifacts
+        description: Successful Actions run containing both Wild artifacts
         required: true
         type: string
       publish:

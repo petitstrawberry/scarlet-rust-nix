@@ -1,15 +1,17 @@
 name: Build Scarlet Native Host
 
 on:
-  # PR updates run once; push+PR otherwise starts and cancels the same bootstrap.
-  pull_request:
-    paths:
-      - .github/workflows/native-host.yml
-      - flake.nix
-      - flake.lock
-      - nix/vendor-rust-src.nix
-      - native-host/**
-      - scripts/*native*host*
+  # The main toolchain workflow calls this only after publishing its cache.
+  workflow_call:
+    inputs:
+      target:
+        type: string
+        required: false
+        default: aarch64-unknown-scarlet
+      backend:
+        type: string
+        required: false
+        default: cranelift
   workflow_dispatch:
     inputs:
       target:
