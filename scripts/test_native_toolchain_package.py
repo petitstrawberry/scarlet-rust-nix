@@ -196,7 +196,7 @@ class NativeToolchainPackageTests(unittest.TestCase):
         )
         self.assertEqual(manifest["requires"]["scarlet_commit"], SCARLET_COMMIT)
         self.assertEqual(
-            manifest["requires"]["dynamic_loader"], "/system/bin/scarlet-ld"
+            manifest["requires"]["dynamic_loader"], "/bin/scarlet-ld"
         )
         self.assertFalse(manifest["components"]["scarlet_ld"]["included"])
         self.assertEqual(

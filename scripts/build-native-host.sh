@@ -217,13 +217,13 @@ for path in sorted(package.rglob('*')):
                         raise SystemExit(f'Invalid ELF interpreter: {path}')
                     f.seek(offset)
                     interp = f.read(filesz).rstrip(b'\0').decode('utf8')
-                    if interp != '/system/bin/scarlet-ld':
+                    if interp != '/bin/scarlet-ld':
                         raise SystemExit(f'Non-native interpreter {interp}: {path}')
                 has_tls |= kind == 7
         else:
             raise SystemExit(f'Unexpected native ELF type: {path}')
-        if path == package / 'bin/rustc' and interp != '/system/bin/scarlet-ld':
-            raise SystemExit('Native rustc must use /system/bin/scarlet-ld')
+        if path == package / 'bin/rustc' and interp != '/bin/scarlet-ld':
+            raise SystemExit('Native rustc must use /bin/scarlet-ld')
     with path.open('rb') as f:
         digest = hashlib.file_digest(f, 'sha256').hexdigest()
     elfs.append({'path': str(path.relative_to(package)), 'machine': machine, 'osabi': header[7],

@@ -372,7 +372,7 @@ index 8b7153cbf81..8fdcc7032bd 100644
          pre_link_args: TargetOptions::link_args(
              LinkerFlavor::Gnu(Cc::No, Lld::No),
 -            &["--fix-cortex-a53-843419"],
-+            &["--fix-cortex-a53-843419", "--dynamic-linker=/system/bin/scarlet-ld"],
++            &["--fix-cortex-a53-843419", "--dynamic-linker=/bin/scarlet-ld"],
          ),
          features: "+v8a,+outline-atomics,+strict-align,+neon".into(),
          supported_sanitizers: SanitizerSet::KCFI | SanitizerSet::KERNELADDRESS,
@@ -413,7 +413,7 @@ index 51e5fff30f0..b3c354f2bb0 100644
              linker: Some("rust-lld".into()),
 +            pre_link_args: TargetOptions::link_args(
 +                LinkerFlavor::Gnu(Cc::No, Lld::No),
-+                &["--dynamic-linker=/system/bin/scarlet-ld"],
++                &["--dynamic-linker=/bin/scarlet-ld"],
 +            ),
              llvm_abiname: "lp64d".into(),
              cpu: "generic-rv64".into(),
@@ -1012,8 +1012,8 @@ index 00000000000..0e59efefa0b
 +            link("static.elf", crt, executable, runtime)
 +            link("no-constructors.elf", crt, objects["empty"], runtime)
 +            dso = link("runtime.so", "-shared", "-soname", f"{arch}-runtime.so", runtime)
-+            dynamic = link("dynamic.elf", crt, executable, dso, "--dynamic-linker=/system/bin/scarlet-ld")
-+            link("pie.elf", "-pie", crt, executable, dso, "--dynamic-linker=/system/bin/scarlet-ld")
++            dynamic = link("dynamic.elf", crt, executable, dso, "--dynamic-linker=/bin/scarlet-ld")
++            link("pie.elf", "-pie", crt, executable, dso, "--dynamic-linker=/bin/scarlet-ld")
 +            standalone = link("no-std.elf", crt, raw)
 +            alternate = link("custom-entry.elf", "-e", "custom_entry", crt, raw)
 +            forbidden = {"main", "__scarlet_start", "__init_array_start", "__init_array_end"}

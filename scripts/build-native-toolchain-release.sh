@@ -10,7 +10,7 @@ Usage: scripts/build-native-toolchain-release.sh \
 
 Create a deterministic tar.zst release asset, its checksum and a Scarlet bundle
 manifest fragment. The input directories must come from the validated fetch
-helpers. /system/bin/scarlet-ld is a required Scarlet component and is never
+helpers. /bin/scarlet-ld is a required Scarlet component and is never
 included in this toolchain archive.
 USAGE
 }
