@@ -19,13 +19,12 @@ rm -rf "$work/source" "$output/package"
 rm -f "$output/native-linker.tar.xz" "$output/native-linker.tar.xz.sha256"
 source_dir="$work/source"
 revision="$(python3 -c 'import json; print(json.load(open("native-linker/recipe.json"))["revision"])')"
+source_url="$(python3 -c 'import json; print(json.load(open("native-linker/recipe.json"))["upstream"])')"
 git init -q "$source_dir"
-git -C "$source_dir" remote add origin https://github.com/wild-linker/wild.git
+git -C "$source_dir" remote add origin "$source_url"
 git -C "$source_dir" fetch --depth 1 origin "$revision"
 git -C "$source_dir" checkout -q --detach FETCH_HEAD
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$revision"
-git -C "$source_dir" apply --check "$repo_root/native-linker/wild-scarlet.patch"
-git -C "$source_dir" apply "$repo_root/native-linker/wild-scarlet.patch"
 git -C "$source_dir" apply --check --unidiff-zero "$repo_root/native-linker/rust-lld-identity.patch"
 git -C "$source_dir" apply --unidiff-zero "$repo_root/native-linker/rust-lld-identity.patch"
 export CARGO_TARGET_DIR="$work/target" RUSTC="$SCARLET_TOOLCHAIN/bin/rustc"
@@ -71,7 +70,7 @@ cp -R "$output/fixtures/rust" "$package/fixtures/rust"
     -Clink-arg=-z -Clink-arg=max-page-size=4096 -o "$package/bin/native-linker-probe"
 export NATIVE_LINKER_TARGET="$target" NATIVE_LINKER_OUTPUT="$output"
 python3 - <<'PY'
-import hashlib, importlib.util, json, os, pathlib, subprocess, tarfile
+import hashlib, importlib.util, json, os, pathlib, subprocess, tarfile, tomllib
 repo = pathlib.Path.cwd()
 spec = importlib.util.spec_from_file_location('native_linker_check', repo / 'native-linker/check.py')
 check = importlib.util.module_from_spec(spec)
@@ -82,12 +81,13 @@ target = os.environ['NATIVE_LINKER_TARGET']
 for binary in (package / 'bin').iterdir():
     check.audit(binary, target)
 manifest = json.loads((repo / 'native-linker/recipe.json').read_text())
-base_patch = repo / 'native-linker/wild-scarlet.patch'
+with (pathlib.Path(os.environ['SCARLET_TOOLCHAIN']) / 'manifest.toml').open('rb') as stream:
+    rust_revision = tomllib.load(stream)['rust_commit']
 identity_patch = repo / 'native-linker/rust-lld-identity.patch'
 manifest.update(target=target, github_run_id=os.environ.get('GITHUB_RUN_ID'),
+                rust_toolchain_revision=rust_revision,
                 packaging_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
                 status='built-not-guest-verified', guest_verified=False,
-                patch_sha256=hashlib.sha256(base_patch.read_bytes()).hexdigest(),
                 rust_lld_identity_patch_sha256=hashlib.sha256(identity_patch.read_bytes()).hexdigest(),
                 files={str(p.relative_to(package)): hashlib.sha256(p.read_bytes()).hexdigest()
                        for p in package.rglob('*') if p.is_file()})

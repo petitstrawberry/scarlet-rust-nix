@@ -1,13 +1,13 @@
 # Experimental native Scarlet compiler inputs
 
-These inputs apply to the pinned Rust fork revision
-`39c689a4859b9d8ee1828720135defd125c03d31`. The ordinary published cross toolchain
-is unchanged. `scripts/prepare-native-host.py` applies them to a fresh writable
-copy of the existing vendored source, never to registry or installed compiler
-caches. `recipe.json` records the exact dependency versions; preparation records
-all patch and adapter hashes.
+The Rust compiler and standard-library support for a native Scarlet host lives
+in [the Scarlet Rust fork](https://github.com/petitstrawberry/rust). This build
+uses the same `rustRev` as the cross toolchain. `scripts/prepare-native-host.py`
+applies only dependency adaptations to a fresh writable copy of the vendored
+source, never to registry or installed compiler caches. `recipe.json` records
+the dependency versions; preparation records patch and adapter hashes.
 
-The Rust patch enables native dynamic linking and separates executable startup
+The fork enables native dynamic linking and separates executable startup
 into `scarlet-crt0.o`, allowing std to remain statically linked into rustc_driver.
 It adds native compiler cfg paths, owned-memory metadata reads, executable-path
 lookup, and Cranelift AOT support. The compiler marks its successfully linked
@@ -58,20 +58,21 @@ shared slot. The native errno accessor validates the header without allocating
 or lazily creating TLS. These properties do not establish async-signal-safety
 for the runtime or C library; guest startup and thread tests remain necessary.
 
-After source preparation and before bootstrap, the build also requires
-`scripts/test_native_host_errno.py` to pass using `$SCARLET_BOOTSTRAP/bin/rustc`.
-It compiles the committed overlay's production TLS helpers with host syscall and
+After source preparation and before bootstrap, the build also requires the fork's
+`library/std/src/sys/scarlet_errno_abi_test.py` to pass using `$SCARLET_BOOTSTRAP/bin/rustc`.
+It compiles the fork's production TLS helpers with host syscall and
 thread-pointer substitutes, then tests shared header layout, initialization,
 repeated startup, header rejection, and thread isolation. The abort intrinsic
 becomes a typed panic only in that harness. `errno-regression.log` records the
-results; a missing compiler or a failing test stops the build. Run it with
-Python 3.11+ alongside the existing preparation tests:
+results; a missing compiler or a failing test stops the build. Run the fork's
+test with Python 3.11+ and a host rustc:
 
 ```sh
-RUSTC=/path/to/host/rustc python3 -m unittest discover -s scripts -p 'test_*.py'
+RUSTC=/path/to/host/rustc \
+  python3 /path/to/rust/library/std/src/sys/scarlet_errno_abi_test.py
 ```
 
-The std allocator overlay aligns split free blocks to their header alignment.
+The fork's std allocator aligns split free blocks to their header alignment.
 Previously, an odd-sized allocation could place a `Block` at an unaligned
 address even though the returned user pointer was aligned. The fix preserves
 valid near-end allocations by consuming the whole block when rounding its end
@@ -79,7 +80,7 @@ would exceed the block boundary or overflow.
 
 After source preparation and before bootstrap, the build executes
 `scripts/check-native-host-allocator.py` with the pinned build-host rustc. It extracts
-the real patched allocator's `Block`, constants and placement helpers, then
+the fork's allocator `Block`, constants and placement helpers, then
 checks odd sizes, alignment, address/size overflow and exact/near-end fits.
 `allocator-regression.log` records the source hash and test result. This host
 test does not execute native `sbrk`, concurrency or the complete allocator;
@@ -96,7 +97,7 @@ separate macro DSOs inside the guest, loads both in one rustc process, exercises
 function-like, attribute and derive macros plus thread TLS destruction, then
 runs the generated executable. A build alone does not establish this capability.
 
-The filesystem overlay requires Scarlet's Native operations 303/304 and 413–416:
+The fork's filesystem implementation requires Scarlet's Native operations 303/304 and 413–416:
 descriptor/path timestamp updates, file sync, canonicalization, and metadata/mkdir
 with detailed errors. The updated std resolves canonical paths through VFS,
 preserves error kinds for `create_dir_all` and `try_exists`, and performs real

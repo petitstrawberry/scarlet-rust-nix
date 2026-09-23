@@ -177,12 +177,12 @@ $out/
 
 The separate **Build Scarlet Native Host** Actions workflow cross-builds a compiler
 that runs inside Scarlet. It does not replace the existing Linux/macOS toolchains
-or change their pinned Rust revision. LLVM 21, Clang and LLD are downloaded as Nix
+or use a different Rust revision. LLVM 21, Clang and LLD are downloaded as Nix
 binaries; the job fails instead of building those projects if substitution is
 unavailable. The fixed vendored Rust source is copied out of the Nix store before
-applying the experimental `native-host/` patches.
+preparing the `native-host/` dependency adaptations.
 
-Pushes to `feat/native-scarlet-host` and relevant pull requests build AArch64.
+Relevant pull requests build AArch64.
 Once the workflow is available on the repository default branch, it can also be
 started manually for AArch64 or RISC-V64:
 
@@ -193,7 +193,7 @@ gh run list --workflow native-host.yml
 ```
 
 All attempts upload a `native-host-evidence-<target>` artifact with the bootstrap
-configuration, exact command, source patch identities, manifest and logs, including
+configuration, exact command, dependency patch identities, manifest and logs, including
 compile failures. Successful builds additionally upload `native-host-<target>`:
 a sysroot tarball, SHA-256 checksum and manifest. Download one without compiling
 anything locally:

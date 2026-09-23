@@ -89,14 +89,15 @@ mkdir -p "$work_dir/build" "$work_dir/wrappers" "$work_dir/cargo-home"
 export CARGO_HOME="$work_dir/cargo-home" CARGO_NET_OFFLINE=true RUSTC_BOOTSTRAP=1
 python3 "$repo_root/scripts/prepare-native-host.py" --source "$work_dir/prepared-source" \
     --cargo "$SCARLET_BOOTSTRAP/bin/cargo" 2>&1 | tee "$output_dir/prepare.log"
-# Exercise the patched allocator's actual placement logic before the expensive
+# Exercise the fork's allocator placement logic before the expensive
 # cross bootstrap. Compile and execute only a host test, never a native binary.
 python3 "$repo_root/scripts/check-native-host-allocator.py" \
     "$work_dir/prepared-source/library/std/src/sys/alloc/scarlet.rs" \
     --rustc "$SCARLET_BOOTSTRAP/bin/rustc" 2>&1 | tee "$output_dir/allocator-regression.log"
-# The fixed errno slot is part of the native loader/std ABI. Require the real
-# TLS helper behavior to pass on the build host before cross bootstrap.
-RUSTC="$SCARLET_BOOTSTRAP/bin/rustc" python3 "$repo_root/scripts/test_native_host_errno.py" \
+# The fixed errno slot is part of the native loader/std ABI. Run the test from
+# the same fork revision as the compiler we will build.
+RUSTC="$SCARLET_BOOTSTRAP/bin/rustc" \
+    python3 "$work_dir/prepared-source/library/std/src/sys/scarlet_errno_abi_test.py" \
     2>&1 | tee "$output_dir/errno-regression.log"
 # Do not restore source mtimes on equal content: Cargo must reuse unchanged
 # patched files, and must notice changed patches. Vendor files are read-only

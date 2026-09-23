@@ -1,6 +1,7 @@
 # Native Scarlet build-time linker
 
-This ports Wild 0.9.0 at the exact revision in `recipe.json`. It produces `wild`,
+The [Scarlet Wild fork](https://github.com/petitstrawberry/wild) carries the
+linker port at the exact revision in `recipe.json`. It produces `wild`,
 a build-time linker that combines objects and archives into ELF executables.
 Scarlet's separate `scarlet-ld` loads shared objects at runtime.
 
@@ -24,8 +25,8 @@ sources. `scripts/build-native-linker.sh TARGET` builds the host test variant,
 checks direct and archive linkage plus missing-symbol errors, then builds the
 native binary and guest probe. It also captures and replays a Rust std program's
 actual objects, rlibs and linker arguments, using the cached cross compiler.
-Each artifact has a pinned source revision,
-patch digest, per-file checksums and an archive checksum.
+Each artifact has a pinned fork revision, the display-name patch digest,
+per-file checksums and an archive checksum.
 
 Host checks are not guest evidence. Artifacts are marked
 `built-not-guest-verified` until the probe runs in Scarlet. `probe.rs` executes the
@@ -49,14 +50,14 @@ scripts/fetch-native-linker.sh 35554514866 aarch64-unknown-scarlet /tmp/native-l
 
 The helper verifies the requested run and target, archive checksum, manifest and
 every packaged file checksum. It refuses an existing destination. Stage
-`bin/wild` as `/system/bin/wild` alongside the native compiler overlay and pass
-`--linker /system/bin/wild --linker-flavor ld.lld` to the full native rustc probe.
+`bin/wild` as `/bin/wild` alongside the native compiler and pass
+`--linker /bin/wild --linker-flavor ld.lld` to the full native rustc probe.
 
 Guest layout for the probe:
 
 ```
-/system/bin/wild
-/system/bin/native-linker-probe
+/bin/wild
+/bin/native-linker-probe
 /opt/native-linker/fixtures/{main.o,answer.o,bias.o,libanswer.a}
 /opt/native-linker/fixtures/rust/{link.args,*.o,*.rlib}
 ```

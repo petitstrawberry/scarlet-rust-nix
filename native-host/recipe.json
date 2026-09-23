@@ -1,5 +1,4 @@
 {
-  "base_rust_revision": "39c689a4859b9d8ee1828720135defd125c03d31",
   "packages": [
     {
       "name": "libloading",

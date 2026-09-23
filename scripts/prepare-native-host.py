@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Prepare an isolated, vendored Rust source tree for the native Scarlet host.
+"""Prepare vendored dependencies for a native Scarlet compiler build.
 
+The Rust compiler and standard-library changes live in the Scarlet Rust fork.
 This changes only --source; it never patches registry caches or an installed
-compiler. All input patches and added source files are recorded by SHA-256.
+compiler. Dependency inputs are recorded by SHA-256.
 """
 import argparse
 import hashlib
@@ -26,9 +27,7 @@ def apply_patch(source, patch, *, check_only=False):
                    if key not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
     environment["GIT_CEILING_DIRECTORIES"] = str(source.resolve().parent)
     for options in ([["--check"]] if check_only else [["--check"], []]):
-        # Source overlays include exact, context-free hunks generated against
-        # recipe.base_rust_revision. Git otherwise rejects interior zero-context
-        # hunks even when their old lines match the pinned source exactly.
+        # Some dependency patches contain exact, context-free hunks.
         subprocess.run(["git", "apply", "--unidiff-zero", *options, str(patch)], cwd=source,
                        env=environment, check=True)
 
@@ -52,20 +51,17 @@ def prepare(source, inputs, cargo=None):
     inputs = inputs.resolve(strict=True)
     marker = source / ".scarlet-native-host-prepared.json"
     if marker.exists() or (source / "native-host-deps").exists():
-        raise ValueError("source already prepared; use a fresh writable copy of the pinned source")
+        raise ValueError("source already prepared; use a fresh writable copy of the Rust source")
     if not (source / "compiler/rustc_target/src/spec/targets/aarch64_unknown_scarlet.rs").is_file():
         raise ValueError("source must be the Scarlet Rust fork")
+    if not (source / "library/std/src/sys/scarlet_errno_abi_test.py").is_file():
+        raise ValueError("Scarlet Rust fork lacks the integrated native-host runtime")
     if not (source / ".cargo/config.toml").is_file() or not (source / "vendor").is_dir():
         raise ValueError("source must contain the published vendored dependencies")
     recipe = json.loads((inputs / "recipe.json").read_text())
-    if os.environ.get("SCARLET_RUST_REV", recipe["base_rust_revision"]) != recipe["base_rust_revision"]:
-        raise ValueError("native host patches require their exact pinned Rust source revision")
     records = []
     for package in recipe["packages"]:
         package["source"] = find_package(source / "vendor", package["name"], package["version"])
-    # Check source patch applicability before creating any local dependency copies.
-    source_patch = inputs / "patches/rust-native-host.patch"
-    apply_patch(source, source_patch, check_only=True)
     for package in recipe["packages"]:
         destination = source / "native-host-deps" / f'{package["name"]}-{package["version"]}'
         shutil.copytree(package["source"], destination, ignore=shutil.ignore_patterns(".git", ".cargo-checksum.json", ".cargo-ok", ".cargo_vcs_info.json"))
@@ -80,8 +76,6 @@ def prepare(source, inputs, cargo=None):
                 shutil.copyfile(input_file, target)
             else:
                 raise ValueError(f"unknown operation {operation}")
-    apply_patch(source, source_patch)
-    records.append({"path": str(source_patch.relative_to(inputs)), "sha256": sha256(source_patch)})
     manifest = source / "Cargo.toml"
     if "[patch.crates-io]" in [line.strip() for line in manifest.read_text().splitlines()]:
         raise ValueError("unexpected existing root patch table; adapt preparation explicitly")
@@ -90,6 +84,20 @@ def prepare(source, inputs, cargo=None):
         for package in recipe["packages"]:
             if package.get("root_patch"):
                 stream.write(f'{package["root_patch"]} = {{ package = "{package["name"]}", path = "native-host-deps/{package["name"]}-{package["version"]}" }}\n')
+    # Cranelift is an independent Cargo workspace, so the root patch table
+    # does not apply to its target-lexicon dependency.
+    lexicon = next(package for package in recipe["packages"] if package["name"] == "target-lexicon")
+    backend_manifest = source / "compiler/rustc_codegen_cranelift/Cargo.toml"
+    backend_text = backend_manifest.read_text()
+    section = "[patch.crates-io]\n"
+    if backend_text.count(section) != 1 or "target-lexicon = { path =" in backend_text:
+        raise ValueError("unexpected Cranelift patch table; adapt preparation explicitly")
+    backend_text = backend_text.replace(
+        section,
+        section + f'target-lexicon = {{ path = "../../native-host-deps/target-lexicon-{lexicon["version"]}" }}\n',
+        1,
+    )
+    backend_manifest.write_text(backend_text)
     if cargo:
         command = [str(cargo), "update", "--offline"]
         for package in recipe["packages"]:
@@ -97,7 +105,12 @@ def prepare(source, inputs, cargo=None):
                 command.extend(["-p", f'{package["name"]}@{package["version"]}'])
         environment = dict(os.environ, RUSTC=str(cargo.parent / "rustc"))
         subprocess.run(command, cwd=source, env=environment, check=True)
-    marker.write_text(json.dumps({"schema": 1, "base_rust_revision": recipe["base_rust_revision"], "inputs": records, "native_compiler_built": False, "guest_execution_verified": False}, indent=2) + "\n")
+        subprocess.run([str(cargo), "update", "--offline", "-p",
+                        f'target-lexicon@{lexicon["version"]}'],
+                       cwd=backend_manifest.parent, env=environment, check=True)
+    marker.write_text(json.dumps({"schema": 2, "rust_revision": os.environ.get("SCARLET_RUST_REV"),
+                                  "inputs": records, "native_compiler_built": False,
+                                  "guest_execution_verified": False}, indent=2) + "\n")
     print(f"Prepared native Scarlet source: {source}")
 
 
