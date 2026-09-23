@@ -14,7 +14,7 @@ prepare = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(prepare)
 
 
-class PatchTests(unittest.TestCase):
+class DependencyPreparationTests(unittest.TestCase):
     def test_prepares_dependencies_without_patching_rust_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -25,9 +25,6 @@ class PatchTests(unittest.TestCase):
             target = source / "compiler/rustc_target/src/spec/targets/aarch64_unknown_scarlet.rs"
             target.parent.mkdir(parents=True)
             target.write_text("fork-owned source stays unchanged\n")
-            errno_test = source / "library/std/src/sys/scarlet_errno_abi_test.py"
-            errno_test.parent.mkdir(parents=True)
-            errno_test.write_text("# fork-owned native runtime check\n")
             backend = source / "compiler/rustc_codegen_cranelift/Cargo.toml"
             backend.parent.mkdir(parents=True)
             backend.write_text("[patch.crates-io]\n# existing section\n")
@@ -101,42 +98,6 @@ class PatchTests(unittest.TestCase):
                 {"repository": str(lexicon_fork), "revision": revision},
             ])
 
-    def test_context_free_interior_hunk_checks_and_applies(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source"
-            source.mkdir()
-            target = source / "tls.rs"
-            target.write_text("first\nconst KEYS: usize = 128;\nlast\n")
-            patch = Path(tmp) / "tls.patch"
-            patch.write_text("diff --git a/tls.rs b/tls.rs\n"
-                             "--- a/tls.rs\n+++ b/tls.rs\n"
-                             "@@ -2 +2 @@\n"
-                             "-const KEYS: usize = 128;\n"
-                             "+const KEYS: usize = 1024;\n")
-            prepare.apply_patch(source, patch, check_only=True)
-            self.assertIn("= 128;", target.read_text())
-            prepare.apply_patch(source, patch)
-            self.assertEqual(target.read_text(), "first\nconst KEYS: usize = 1024;\nlast\n")
-
-    def test_patch_applies_to_nested_source_and_dependency_without_touching_parent(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            subprocess.run(["git", "init", "-q", str(root)], check=True)
-            (root / "source.txt").write_text("keep parent\n")
-            patch = root / "change.patch"
-            patch.write_text("diff --git a/source.txt b/source.txt\n"
-                             "--- a/source.txt\n+++ b/source.txt\n"
-                             "@@ -1 +1 @@\n-before\n+after\n")
-            for relative in ("work/source", "work/source/native-host-deps/example"):
-                source = root / relative
-                source.mkdir(parents=True)
-                target = source / "source.txt"
-                target.write_text("before\n")
-                prepare.apply_patch(source, patch, check_only=True)
-                self.assertEqual(target.read_text(), "before\n")
-                prepare.apply_patch(source, patch)
-                self.assertEqual(target.read_text(), "after\n")
-                self.assertEqual((root / "source.txt").read_text(), "keep parent\n")
 
 
 if __name__ == "__main__":

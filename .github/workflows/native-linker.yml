@@ -39,9 +39,9 @@ jobs:
           path: |
             ~/.cargo/registry
             .native-linker-work/target
-          key: native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/vendor-rust-src.nix', 'native-linker/recipe.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/vendor-rust-src.nix', 'native-linker/recipe.json', 'native-linker/rust-lld-identity.patch') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/vendor-rust-src.nix', 'native-linker/recipe.json') }}-
+            native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/vendor-rust-src.nix', 'native-linker/recipe.json', 'native-linker/rust-lld-identity.patch') }}-
       - name: Get prebuilt cross compiler and LLVM tools
         run: nix build .#scarlet-rust-toolchain .#scarlet-clang .#scarlet-llvm .#scarlet-lld --no-link --max-jobs 0 --accept-flake-config
       - name: Build native linker

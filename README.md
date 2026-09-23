@@ -237,8 +237,8 @@ Native compiler and Wild artifacts can be promoted into architecture-specific,
 deterministic `tar.zst` release candidates without rebuilding Rust. The package
 is installed under `/opt/scarlet/toolchains/rust/<version>` and contains
 relative `librustc_driver` links beside both `rustc` and the Cranelift backend,
-a Wild-backed `rust-lld` alias with toolchain-facing CLI identity, the backend
-itself and static target libraries.
+a Wild-backed `rust-lld` alias with its display name set during the linker
+build, the backend and static target libraries.
 
 `/bin/scarlet-ld` remains part of the Scarlet repository and image. Each
 toolchain manifest records the exact Scarlet commit required by the bundle; the

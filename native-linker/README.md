@@ -2,9 +2,10 @@
 
 The pinned [Scarlet Wild fork](https://github.com/petitstrawberry/wild) supplies
 `wild`, the build-time linker for native Scarlet Rust programs. `recipe.json`
-records its exact source revision. The fork also makes the `rust-lld` alias use
-its invoked name in help and diagnostics. `scarlet-ld` is Scarlet's separate
-runtime ELF loader.
+records its exact source revision. `scarlet-ld` is Scarlet's separate runtime
+ELF loader. This build applies `rust-lld-identity.patch` when compiling the
+linker, so the `rust-lld` alias uses its invoked name in help and diagnostics.
+The Wild fork does not carry that display-name change.
 
 `scripts/build-native-linker.sh TARGET` builds Wild for AArch64 or RV64 in
 Actions and packages the binary, licenses and checksummed manifest. The native

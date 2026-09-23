@@ -25,6 +25,8 @@ git -C "$source_dir" remote add origin "$source_url"
 git -C "$source_dir" fetch --depth 1 origin "$revision"
 git -C "$source_dir" checkout -q --detach FETCH_HEAD
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$revision"
+git -C "$source_dir" apply --check --unidiff-zero "$repo_root/native-linker/rust-lld-identity.patch"
+git -C "$source_dir" apply --unidiff-zero "$repo_root/native-linker/rust-lld-identity.patch"
 export CARGO_TARGET_DIR="$work/target" RUSTC="$SCARLET_TOOLCHAIN/bin/rustc"
 export CARGO_PROFILE_OPT_OPT_LEVEL=2 CARGO_NET_OFFLINE=false
 cargo="$SCARLET_TOOLCHAIN/bin/cargo"
@@ -56,10 +58,12 @@ if kind not in (2, 3) or (actual_machine, version) != (machine, 1):
 manifest = json.loads((repo / 'native-linker/recipe.json').read_text())
 with (pathlib.Path(os.environ['SCARLET_TOOLCHAIN']) / 'manifest.toml').open('rb') as stream:
     rust_revision = tomllib.load(stream)['rust_commit']
+identity_patch = repo / 'native-linker/rust-lld-identity.patch'
 manifest.update(target=target, github_run_id=os.environ.get('GITHUB_RUN_ID'),
                 rust_toolchain_revision=rust_revision,
                 packaging_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
                 status='built-not-guest-verified', guest_verified=False,
+                rust_lld_identity_patch_sha256=hashlib.sha256(identity_patch.read_bytes()).hexdigest(),
                 files={str(p.relative_to(package)): hashlib.sha256(p.read_bytes()).hexdigest()
                        for p in package.rglob('*') if p.is_file()})
 for path in (out / 'manifest.json', package / 'manifest.json'):
