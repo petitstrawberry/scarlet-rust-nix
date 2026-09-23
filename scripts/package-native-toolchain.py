@@ -3,7 +3,7 @@
 
 The inputs are already-validated Actions artifacts downloaded with
 fetch-native-host.sh and fetch-native-linker.sh.  This step deliberately does
-not package Scarlet's runtime dynamic linker: /system/bin/scarlet-ld belongs to
+not package Scarlet's runtime dynamic linker: /bin/scarlet-ld belongs to
 the matching Scarlet image and is recorded as a compatibility requirement.
 """
 
@@ -31,7 +31,7 @@ VERSION_RE = re.compile(r"v[0-9A-Za-z][0-9A-Za-z._+-]*\Z")
 COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
 RUN_ID_RE = re.compile(r"[1-9][0-9]*\Z")
 STATIC_SUFFIXES = {".a", ".o", ".rlib"}
-INTERPRETER = "/system/bin/scarlet-ld"
+INTERPRETER = "/bin/scarlet-ld"
 
 
 def sha256(path: Path) -> str:

@@ -206,7 +206,7 @@ The download validates the checksum, target, run ID and Cranelift code-generatio
 capability, and extracts only into a new directory. Frontend-only `dummy`
 artifacts require an explicit `gh run download` for diagnostic work. The sysroot contains `bin/rustc`, its native shared libraries and
 the matching native standard-library rlibs. It must be installed in a Scarlet
-image together with `/system/bin/scarlet-ld`; Linux/macOS cannot run its compiler.
+image together with `/bin/scarlet-ld`; Linux/macOS cannot run its compiler.
 The default `cranelift` backend is built for native code generation without a
 native LLVM/C++ dependency. The optional `dummy` backend permits frontend
 diagnostics but cannot generate code.
@@ -239,7 +239,7 @@ is installed under `/opt/scarlet/toolchains/rust/<version>` and contains
 relative `librustc_driver` links beside both `rustc` and the Cranelift backend,
 a `rust-lld` link to Wild, the backend itself and static target libraries.
 
-`/system/bin/scarlet-ld` remains part of the Scarlet repository and image. Each
+`/bin/scarlet-ld` remains part of the Scarlet repository and image. Each
 toolchain manifest records the exact Scarlet commit required by the bundle; the
 runtime loader is deliberately absent from the archive. See
 [`native-toolchain/README.md`](native-toolchain/README.md) for the package

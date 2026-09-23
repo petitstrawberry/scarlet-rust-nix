@@ -8,7 +8,7 @@ Scarlet. `scarlet-rust-nix` packages the compiler and build-time linker:
 - the matching target's static standard-library inputs
 - Wild as both `bin/wild` and `bin/rust-lld`
 
-Scarlet owns `/system/bin/scarlet-ld`. The runtime loader is coupled to Scarlet's
+Scarlet owns `/bin/scarlet-ld`. The runtime loader is coupled to Scarlet's
 `exec`, VM and native ABI, so it is not copied into this repository's releases.
 Every native Rust archive instead records the exact required Scarlet commit and
 loader path in `manifest.json`.
