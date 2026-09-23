@@ -4,37 +4,21 @@
       "name": "libloading",
       "version": "0.8.9",
       "root_patch": "libloading_08",
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/libloading-0.8.9-scarlet.patch"
-        },
-        {
-          "kind": "copy",
-          "input": "files/libloading_scarlet.rs",
-          "destination": "src/scarlet.rs"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/rust_libloading.git",
+        "revision": "179bc39a80b9c7ac9955c4cdc30b0c7c938ee813"
+      },
+      "operations": []
     },
     {
       "name": "libloading",
       "version": "0.9.0",
       "root_patch": "libloading_09",
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/libloading-0.9.0-scarlet.patch"
-        },
-        {
-          "kind": "copy",
-          "input": "files/libloading_scarlet.rs",
-          "destination": "src/scarlet.rs"
-        },
-        {
-          "kind": "patch",
-          "input": "patches/libloading-0.9.0-adapter.patch"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/rust_libloading.git",
+        "revision": "49abf0a1f5cdd2635116f38ece4ed3e1dc193fa2"
+      },
+      "operations": []
     },
     {
       "name": "stacker",

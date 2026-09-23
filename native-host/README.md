@@ -3,9 +3,10 @@
 The Rust compiler and standard-library support for a native Scarlet host lives
 in [the Scarlet Rust fork](https://github.com/petitstrawberry/rust). This build
 uses the same `rustRev` as the cross toolchain. `scripts/prepare-native-host.py`
-applies only dependency adaptations to a fresh writable copy of the vendored
-source, never to registry or installed compiler caches. `recipe.json` records
-the dependency versions; preparation records patch and adapter hashes.
+prepares dependencies in a fresh writable copy of the vendored source, never
+in registry or installed compiler caches. `recipe.json` pins the dependency
+versions and fork commits; preparation records exact Git revisions or patch
+hashes.
 
 The fork enables native dynamic linking and separates executable startup
 into `scarlet-crt0.o`, allowing std to remain statically linked into rustc_driver.
@@ -15,8 +16,10 @@ Scarlet ELF outputs with OSABI83 after checking the ELF architecture/type; the
 packager does not relabel foreign executables. Executable startup CRT objects
 may retain generic ELF OSABI0.
 
-Dependency patches cover libloading0.8.9/0.9.0, stacker0.1.21,
-tempfile3.23.0, and getrandom0.3.3. Cranelift uses the pinned
+Both libloading versions come from the pinned
+[Scarlet libloading fork](https://github.com/petitstrawberry/rust_libloading)
+(`scarlet-0.8.9` and `scarlet-0.9.0`). Remaining dependency patches cover
+stacker0.1.21, tempfile3.23.0, and getrandom0.3.3. Cranelift uses the pinned
 [Scarlet target-lexicon fork](https://github.com/petitstrawberry/target-lexicon)
 to recognize Scarlet triples. The getrandom backend requires actual registered
 entropy (for QEMU, VirtIO RNG); it never accepts Scarlet's pseudo-random fallback.
