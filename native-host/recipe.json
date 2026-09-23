@@ -24,12 +24,11 @@
       "name": "stacker",
       "version": "0.1.21",
       "root_patch": "stacker",
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/stacker-0.1.21-scarlet.patch"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/stacker.git",
+        "revision": "525efa8045f3fa4e29f8abd568d83c41da6f9bb7"
+      },
+      "operations": []
     },
     {
       "name": "target-lexicon",
@@ -45,23 +44,21 @@
       "name": "tempfile",
       "version": "3.23.0",
       "root_patch": "tempfile",
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/tempfile-3.23.0-scarlet.patch"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/tempfile.git",
+        "revision": "601a6cb8784d11e12ee90c5a561c5d2bda58da63"
+      },
+      "operations": []
     },
     {
       "name": "getrandom",
       "version": "0.3.3",
       "root_patch": "getrandom",
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/getrandom-0.3.3-scarlet.patch"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/getrandom.git",
+        "revision": "6e7cf426930802b8f4f06d01c1d686f5e998a4ff"
+      },
+      "operations": []
     }
   ]
 }

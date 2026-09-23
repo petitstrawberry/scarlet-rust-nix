@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage: scripts/fetch-native-linker.sh RUN_ID [TARGET] [DESTINATION]
-Download a native Scarlet Wild linker, its input fixtures and guest probe.
+Download a native Scarlet Wild linker build artifact.
 TARGET defaults to aarch64-unknown-scarlet. DESTINATION must not exist.
 Requires authenticated GitHub CLI and Python 3; no compiler build is performed.
 Override SCARLET_NATIVE_LINKER_REPOSITORY to use a development fork.
@@ -71,7 +71,7 @@ try:
     files = manifest.get('files', {})
     actual = {str(path.relative_to(package)) for path in package.rglob('*')
               if path.is_file() and path != package / 'manifest.json'}
-    if set(files) != actual or not {'bin/wild', 'bin/native-linker-probe'} <= actual:
+    if set(files) != actual or 'bin/wild' not in actual:
         raise SystemExit('Artifact file inventory mismatch')
     for name, digest in files.items():
         if sha256(package / name) != digest:
@@ -80,5 +80,5 @@ try:
 finally:
     shutil.rmtree(staging)
 print(destination)
-print('Native linker downloaded and checksums verified. Use its guest probe for execution acceptance.')
+print('Native linker downloaded and checksums verified.')
 PY

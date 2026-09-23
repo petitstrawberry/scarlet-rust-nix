@@ -192,8 +192,8 @@ gh workflow run native-host.yml --ref main \
 gh run list --workflow native-host.yml
 ```
 
-All attempts upload a `native-host-evidence-<target>` artifact with the bootstrap
-configuration, exact command, dependency patch identities, manifest and logs, including
+All attempts upload a `native-host-build-logs-<target>` artifact with the bootstrap
+configuration, exact command, pinned dependency revisions, manifest and logs, including
 compile failures. Successful builds additionally upload `native-host-<target>`:
 a sysroot tarball, SHA-256 checksum and manifest. Download one without compiling
 anything locally:
@@ -216,7 +216,7 @@ those end-to-end checks are performed separately.
 
 Actions caches compiler intermediates and prepared source separately for each
 machine, backend, branch, fork and pinned Nix environment. Partial work is saved after a
-compile failure so a corrected patch can reuse it. A checksum-based source sync
+compile failure so a corrected source revision can reuse it. A checksum-based source sync
 preserves the timestamps of unchanged files and replaces changed files; the
 large vendor tree is restored from Nix rather than cached twice. External
 bootstrap toolchains and Nix store paths are never modified. The workflow neither

@@ -158,11 +158,11 @@ jobs:
             .native-host-work/cargo-home
           key: ${{ steps.bootstrap-cache.outputs.cache-primary-key }}
 
-      - name: Upload build evidence including failures
+      - name: Upload build logs including failures
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: native-host-evidence-${{ env.NATIVE_TARGET }}
+          name: native-host-build-logs-${{ env.NATIVE_TARGET }}
           path: |
             native-host-output/*.json
             native-host-output/*.toml

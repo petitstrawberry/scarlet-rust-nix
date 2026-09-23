@@ -39,13 +39,12 @@ jobs:
           path: |
             ~/.cargo/registry
             .native-linker-work/target
-          key: native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/vendor-rust-src.nix', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/*.patch') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/vendor-rust-src.nix', 'native-linker/recipe.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/vendor-rust-src.nix', 'native-linker/recipe.json') }}-${{ hashFiles('native-linker/*.patch') }}-
             native-linker-v1-${{ matrix.target }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/vendor-rust-src.nix', 'native-linker/recipe.json') }}-
       - name: Get prebuilt cross compiler and LLVM tools
         run: nix build .#scarlet-rust-toolchain .#scarlet-clang .#scarlet-llvm .#scarlet-lld --no-link --max-jobs 0 --accept-flake-config
-      - name: Build and check native linker
+      - name: Build native linker
         run: |
           bash -n scripts/build-native-linker.sh
           nix develop --impure --expr 'import ./native-linker/shell.nix { flake = builtins.getFlake (toString ./.); }' \
@@ -59,17 +58,7 @@ jobs:
             ~/.cargo/registry
             .native-linker-work/target
           key: ${{ steps.linker-cache.outputs.cache-primary-key }}
-      - name: Upload build evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-linker-evidence-${{ matrix.target }}
-          path: |
-            native-linker-output/*.log
-            native-linker-output/*.txt
-            native-linker-output/manifest.json
-          if-no-files-found: warn
-      - name: Upload native linker and guest probe
+      - name: Upload native linker
         uses: actions/upload-artifact@v4
         with:
           name: native-linker-${{ matrix.target }}

@@ -121,7 +121,7 @@ def main():
     if args.build_dir == source / "build":
         p.error("use a dedicated build directory, not the checkout's default build directory")
     if output.exists():
-        p.error("output already exists; preserve old evidence and choose a fresh recipe directory")
+        p.error("output already exists; choose a fresh recipe directory")
     if args.vendor and not (source / "vendor").is_dir():
         p.error("--vendor requires the prepared source's vendor directory")
     version = subprocess.check_output([str(args.stage0_rustc), "-Vv"], text=True)
