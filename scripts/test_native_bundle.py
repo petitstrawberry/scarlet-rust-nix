@@ -36,7 +36,7 @@ def fixture(directory):
             "requires": {"scarlet_commit": SCARLET, "dynamic_loader": "/bin/scarlet-ld"},
             "components": {"scarlet_ld": {"included": False}},
             "capabilities": {key: True for key in (
-                "rustc", "codegen", "linker", "static_target_std"
+                "rustc", "codegen", "linker", "static_target_std", "cargo"
             )},
         }))
 
@@ -81,6 +81,7 @@ class NativeBundleTests(unittest.TestCase):
             lambda m: m["requires"].update(dynamic_loader="/system/bin/scarlet-ld"),
             lambda m: m["requires"].update(scarlet_commit=COMMIT),
             lambda m: m["capabilities"].update(static_target_std=False),
+            lambda m: m["capabilities"].update(cargo=False),
         ]
         for case in range(len(changes) + 2):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:

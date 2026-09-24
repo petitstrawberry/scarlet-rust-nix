@@ -35,7 +35,8 @@ shutil.copytree(os.environ['TEST_NATIVE_ARTIFACT'], destination, dirs_exist_ok=T
         self.destination = self.root / "downloaded"
 
     def create_artifact(self, *, member="native-host/bin/rustc", symlink=False,
-                        target=TARGET, run_id="1234", backend="cranelift", codegen=True):
+                        target=TARGET, run_id="1234", backend="cranelift", codegen=True,
+                        cargo=True):
         archive = self.artifact / "native-host.tar.xz"
         with tarfile.open(archive, "w:xz") as tar:
             info = tarfile.TarInfo(member)
@@ -48,12 +49,17 @@ shutil.copytree(os.environ['TEST_NATIVE_ARTIFACT'], destination, dirs_exist_ok=T
                 content = b"test artifact; never executed\n"
                 info.size = len(content)
                 tar.addfile(info, io.BytesIO(content))
+            if member != "native-host/bin/cargo":
+                cargo_bin = tarfile.TarInfo("native-host/bin/cargo")
+                cargo_bin.mode = 0o755
+                cargo_bin.size = len(b"test cargo artifact\n")
+                tar.addfile(cargo_bin, io.BytesIO(b"test cargo artifact\n"))
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         (self.artifact / "native-host.tar.xz.sha256").write_text(digest + "  native-host.tar.xz\n")
         (self.artifact / "manifest.json").write_text(json.dumps({
             "schema": 1, "status": "built-not-guest-verified", "native_host": target,
             "github_run_id": run_id, "exit_code": 0, "guest_verified": False,
-            "backend": backend, "capabilities": {"codegen": codegen},
+            "backend": backend, "capabilities": {"codegen": codegen, "cargo": cargo},
         }))
 
     def fetch(self):
@@ -65,6 +71,7 @@ shutil.copytree(os.environ['TEST_NATIVE_ARTIFACT'], destination, dirs_exist_ok=T
         result = self.fetch()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(os.access(self.destination / "bin/rustc", os.X_OK))
+        self.assertTrue(os.access(self.destination / "bin/cargo", os.X_OK))
         self.assertFalse(json.loads((self.destination / "native-host-manifest.json").read_text())["guest_verified"])
 
     def test_checksum_failure_does_not_extract(self):
@@ -84,6 +91,12 @@ shutil.copytree(os.environ['TEST_NATIVE_ARTIFACT'], destination, dirs_exist_ok=T
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("no Cranelift code generator", result.stderr)
                 self.assertFalse(self.destination.exists())
+
+    def test_artifact_without_cargo_is_rejected(self):
+        self.create_artifact(cargo=False)
+        result = self.fetch()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no native Cargo", result.stderr)
 
     def test_wrong_target_or_run_is_rejected(self):
         for target, run_id in [("riscv64gc-unknown-scarlet", "1234"), (TARGET, "1235")]:

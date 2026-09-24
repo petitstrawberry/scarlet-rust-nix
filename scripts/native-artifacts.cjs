@@ -221,7 +221,7 @@ async function publish({ github, context, core, directory = 'release-assets', ex
     if (!release) {
       execute('gh', ['release', 'create', version, '--repo', repository, '--target', context.sha,
         '--draft', '--prerelease', '--title', `Scarlet native Rust ${version}`,
-        '--notes', `Built from ${context.sha}. Includes AArch64 and RV64 rustc, Cranelift, static std, Wild and an installable rust-toolchain-bundle archive. Consumers select the release explicitly; Scarlet is not updated automatically. Guest execution is not verified by this build.`], { stdio: 'inherit' });
+        '--notes', `Built from ${context.sha}. Includes AArch64 and RV64 rustc, Cargo, Cranelift, static std, Wild and an installable rust-toolchain-bundle archive. Consumers select the release explicitly; Scarlet is not updated automatically. Guest execution is not verified by this build.`], { stdio: 'inherit' });
     }
     execute('gh', ['release', 'upload', version, '--repo', repository, '--clobber', ...files], { stdio: 'inherit' });
     validateRelease(await findRelease(github, context.repo, version), context.sha, true);

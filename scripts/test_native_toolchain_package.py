@@ -111,7 +111,8 @@ class NativeToolchainPackageTests(unittest.TestCase):
             interpreter=PACKAGE.INTERPRETER,
             needed=("librustc_driver-test.so",),
         )
-        write_elf(self.host / "bin/cargo", interpreter=PACKAGE.INTERPRETER)
+        write_elf(self.host / "bin/cargo", interpreter=PACKAGE.INTERPRETER,
+                  needed=("libcompiler-support.so",))
         write_elf(
             self.host / "lib/librustc_driver-test.so",
             needed=("libcompiler-support.so",),
@@ -151,7 +152,7 @@ class NativeToolchainPackageTests(unittest.TestCase):
             "rust_commit": RUST_COMMIT,
             "github_run_id": "1234",
             "packaging_commit": "4" * 40,
-            "capabilities": {"codegen": True},
+            "capabilities": {"codegen": True, "cargo": True},
         }
         (self.host / "native-host-manifest.json").write_text(
             json.dumps(host_manifest)
@@ -202,7 +203,7 @@ class NativeToolchainPackageTests(unittest.TestCase):
         self.assertEqual(
             manifest["capabilities"],
             {
-                "cargo": False,
+                "cargo": True,
                 "codegen": True,
                 "guest_verified": False,
                 "linker": True,
@@ -213,13 +214,15 @@ class NativeToolchainPackageTests(unittest.TestCase):
         )
 
         self.assertTrue((self.destination / "bin/rustc").is_file())
+        self.assertTrue((self.destination / "bin/cargo").is_file())
         self.assertTrue((self.destination / "bin/wild").is_file())
         self.assertEqual(os.readlink(self.destination / "bin/rust-lld"), "wild")
         self.assertEqual(
             os.readlink(self.destination / "bin/librustc_driver-test.so"),
             "../lib/librustc_driver-test.so",
         )
-        self.assertFalse((self.destination / "bin/libcompiler-support.so").exists())
+        self.assertEqual(os.readlink(self.destination / "bin/libcompiler-support.so"),
+                         "../lib/libcompiler-support.so")
         self.assertTrue((self.destination / "lib/libcompiler-support.so").is_file())
         self.assertEqual(
             os.readlink(
@@ -228,7 +231,6 @@ class NativeToolchainPackageTests(unittest.TestCase):
             ),
             "../../../librustc_driver-test.so",
         )
-        self.assertFalse((self.destination / "bin/cargo").exists())
         self.assertFalse(any(self.destination.rglob("*.rmeta")))
         self.assertFalse(
             (self.destination / f"lib/rustlib/{TARGET}/lib/libstd-test.so").exists()
@@ -268,6 +270,16 @@ class NativeToolchainPackageTests(unittest.TestCase):
             needed=("librustc_driver-test.so",),
         )
         with self.assertRaisesRegex(ValueError, "does not request"):
+            self.assemble()
+
+    def test_rejects_cargo_with_non_scarlet_loader(self):
+        write_elf(self.host / "bin/cargo", interpreter="/system/bin/scarlet-ld")
+        with self.assertRaisesRegex(ValueError, "native Cargo does not request"):
+            self.assemble()
+
+    def test_rejects_missing_cargo(self):
+        (self.host / "bin/cargo").unlink()
+        with self.assertRaisesRegex(ValueError, "native Cargo must be a regular file"):
             self.assemble()
 
     def test_rejects_missing_transitive_dynamic_dependency(self):
