@@ -24,7 +24,8 @@ is installed. The build's manifest records the Rust revision, target, backend,
 and artifact identity. A successful build does not imply guest execution.
 
 Use `scripts/fetch-native-host.sh` with an exact Actions run ID to download a
-native-host artifact. The separate versioned packaging workflow combines exact
-native-host and Wild run IDs into the distributable toolchain. Generated logs,
+native-host artifact. Main's versioned packaging workflow automatically selects
+matching native-host and Wild artifacts for both architectures and updates the
+Scarlet bundle after publication. Generated logs,
 source copies, and build directories are Actions artifacts or ignored local
 outputs, never checked-in source.

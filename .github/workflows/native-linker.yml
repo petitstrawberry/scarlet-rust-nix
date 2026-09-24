@@ -60,9 +60,24 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-linker-${{ matrix.target }}
+          overwrite: true
           path: |
             native-linker-output/native-linker.tar.xz
             native-linker-output/native-linker.tar.xz.sha256
             native-linker-output/manifest.json
           if-no-files-found: error
           compression-level: 0
+
+      - name: Record reusable build inputs
+        env:
+          TARGET: ${{ matrix.target }}
+        run: node scripts/native-artifacts.cjs record linker "$TARGET" "$RUNNER_TEMP/native-inputs.json"
+
+      - name: Upload reusable build identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linker-inputs-${{ matrix.target }}
+          overwrite: true
+          path: ${{ runner.temp }}/native-inputs.json
+          if-no-files-found: error
+          retention-days: 30

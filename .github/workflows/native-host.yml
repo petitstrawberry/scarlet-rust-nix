@@ -54,7 +54,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Initialize evidence and cache identity
+      - name: Initialize build metadata and cache identity
         id: identity
         env:
           CACHE_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
@@ -165,6 +165,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-host-build-logs-${{ env.NATIVE_TARGET }}
+          overwrite: true
           path: |
             native-host-output/*.json
             native-host-output/*.toml
@@ -179,10 +180,25 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-host-${{ env.NATIVE_TARGET }}
+          overwrite: true
           path: |
             native-host-output/native-host.tar.xz
             native-host-output/native-host.tar.xz.sha256
             native-host-output/manifest.json
           if-no-files-found: error
           compression-level: 0
+          retention-days: 30
+
+      - name: Record reusable build inputs
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' && env.NATIVE_BACKEND == 'cranelift' }}
+        run: node scripts/native-artifacts.cjs record host "$NATIVE_TARGET" "$RUNNER_TEMP/native-inputs.json"
+
+      - name: Upload reusable build identity
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' && env.NATIVE_BACKEND == 'cranelift' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-host-inputs-${{ env.NATIVE_TARGET }}
+          overwrite: true
+          path: ${{ runner.temp }}/native-inputs.json
+          if-no-files-found: error
           retention-days: 30
