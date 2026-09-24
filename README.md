@@ -187,7 +187,7 @@ The main toolchain workflow first builds and uploads the cross toolchain, then
 runs the affected native-host and native-linker jobs. Its final CI check waits
 for all required artifacts; native jobs cannot race an empty Cachix cache.
 After merging, the main workflow automatically publishes both architectures and
-updates Scarlet's bundle. Standalone component builds can also be started for
+an installable bundle in this repository's releases. Standalone component builds can also be started for
 AArch64 or RISC-V64:
 
 ```sh
@@ -253,16 +253,16 @@ workflow runs after main's cross-toolchain checks, cache uploads and pins succee
 It reuses successful PR artifacts only when their recorded build inputs match
 the actual Git trees; missing or expired components are built in Actions.
 Both architectures are packaged before publishing a prerelease named
-`v0.1.0-dev.<packaging-commit>`. A superseded main run cannot advance the consumer.
+`v0.1.0-dev.<packaging-commit>`. A superseded main run cannot publish.
 
-Publication updates `bundles/rust-toolchain/bundle.toml` and its `current` symlink
-together in a single commit on `petitstrawberry/Scarlet`'s `dev` branch. The URL,
-per-architecture SHA-256 values and versioned installation prefix stay pinned;
-consumers do not download a mutable `latest` archive. The existing
-`SCARLET_RUST_NIX_UPDATE_TOKEN` must have contents write access to Scarlet as well
-as this repository. Credential availability is checked before missing native
-builds start. The token also allows the bundle update to trigger Scarlet's CI.
+Each release includes `rust-toolchain-bundle-<version>.tar.gz` and its SHA-256
+sidecar. The bundle contains `rust-toolchain/bundle.toml` with both archive URLs
+and checksums, plus the matching `fs/opt/scarlet/toolchains/rust/current` symlink.
+Scarlet consumers choose a release and adopt that bundle explicitly; publication
+does not modify the Scarlet repository or require a token with write access to it.
+Native releases use this repository's `GITHUB_TOKEN`.
 
-Rerunning the main workflow is safe: successful component uploads can be reused,
-published versions are never replaced, and an already-current bundle is a no-op.
+See [the bundle installation instructions](native-toolchain/README.md#select-a-release)
+for downloading and verifying a selected bundle. Rerunning the main workflow
+reuses successful component uploads and never replaces a published release.
 No guest execution claim is added by publishing the build.
