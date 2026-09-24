@@ -90,6 +90,15 @@ test('a host recipe change does not discard matching linker artifacts', async ()
   assert.deepEqual(await f.execute(), { aarch64_run: '', riscv64_run: '', linker_run: '42' });
 });
 
+test('publication-only edits reuse native binaries after verifying their original provenance', async () => {
+  const f = reuseFixture();
+  const tree = TREE.map(entry => ['scripts/native-artifacts.cjs', '.github/workflows/build.yml'].includes(entry.path)
+    ? { ...entry, sha: RUST } : entry);
+  assert.deepEqual(await f.execute({ tree }), { aarch64_run: '42', riscv64_run: '42', linker_run: '42' });
+  const changedCompiler = tree.map(entry => entry.path === 'native-host/recipe.json' ? { ...entry, sha: RUST } : entry);
+  assert.deepEqual(await f.execute({ tree: changedCompiler }), { aarch64_run: '', riscv64_run: '', linker_run: '42' });
+});
+
 test('a retry reuses successful components from its own earlier failed attempt', async () => {
   const f = reuseFixture();
   f.run.conclusion = 'failure';
@@ -111,6 +120,23 @@ test('published releases must contain both complete packages and match the packa
   assert.equal(artifacts.versionFor(SHA), VERSION);
 });
 
+test('finds a draft through the release listing when the published-tag endpoint returns 404', async () => {
+  const draft = release(true);
+  const github = {
+    rest: { repos: {
+      getReleaseByTag: async () => { throw Object.assign(new Error('Not Found'), { status: 404 }); },
+      listReleases() {},
+    } },
+    paginate: async () => [{ ...draft, tag_name: 'v-unrelated' }, draft],
+  };
+  assert.equal(await artifacts.findRelease(github, CONTEXT.repo, VERSION), draft);
+  github.paginate = async () => [];
+  assert.equal(await artifacts.findRelease(github, CONTEXT.repo, VERSION), null);
+  github.rest.repos.getReleaseByTag = async () => { throw Object.assign(new Error('Forbidden'), { status: 403 }); };
+  github.paginate = async () => assert.fail('Authentication errors must not be hidden');
+  await assert.rejects(artifacts.findRelease(github, CONTEXT.repo, VERSION), /Forbidden/);
+});
+
 test('publication uploads both packages before making the draft visible', async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'native-publish-test-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -120,13 +146,14 @@ test('publication uploads both packages before making the draft visible', async 
   const github = { rest: {
     repos: {
       getBranch: async () => ({ data: { commit: { sha: SHA } } }),
-      getReleaseByTag: async () => { if (!current) throw Object.assign(new Error('missing'), { status: 404 }); return { data: current }; },
+      getReleaseByTag: async () => { if (!current || current.draft) throw Object.assign(new Error('missing'), { status: 404 }); return { data: current }; },
+      listReleases() {},
     },
     git: { getRef: async () => {
       if (!current || current.draft) throw Object.assign(new Error('no tag'), { status: 404 });
       return { data: { object: { type: 'commit', sha: SHA } } };
     } },
-  } };
+  }, paginate: async () => current ? [current] : [] };
   const log = core();
   await artifacts.publish({ github, context: CONTEXT, core: log, directory, execute: (program, args) => {
     assert.equal(program, 'gh'); commands.push(args[1]);

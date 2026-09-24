@@ -8,6 +8,8 @@ const { execFileSync } = require('node:child_process');
 const TARGETS = ['aarch64-unknown-scarlet', 'riscv64gc-unknown-scarlet'];
 const COMMON = ['flake.nix', 'flake.lock', 'nix/', 'scripts/native-artifacts.cjs',
   '.github/workflows/build.yml', '.github/workflows/native-toolchain-release.yml'];
+const RELEASE_ONLY = new Set(['scripts/native-artifacts.cjs',
+  '.github/workflows/build.yml', '.github/workflows/native-toolchain-release.yml']);
 const INPUTS = {
   host: [...COMMON, 'native-host/', '.github/workflows/native-host.yml',
     'scripts/build-native-host.sh', 'scripts/prepare-native-host.py', 'scripts/check-native-host-llvm.py'],
@@ -15,9 +17,10 @@ const INPUTS = {
     'scripts/build-native-linker.sh'],
 };
 
-function fingerprint(component, tree) {
+function fingerprint(component, tree, buildInputsOnly = false) {
   if (!INPUTS[component]) throw new Error(`Unknown native component: ${component}`);
-  const entries = tree.filter(entry => entry.type !== 'tree' && INPUTS[component].some(input =>
+  const inputs = INPUTS[component].filter(input => !buildInputsOnly || !RELEASE_ONLY.has(input));
+  const entries = tree.filter(entry => entry.type !== 'tree' && inputs.some(input =>
     input.endsWith('/') ? entry.path.startsWith(input) : entry.path === input))
     .map(({ mode, type, sha, path }) => [mode, type, sha, path])
     .sort((a, b) => Buffer.compare(Buffer.from(a[3]), Buffer.from(b[3])));
@@ -63,11 +66,15 @@ async function findRelease(github, repo, version) {
     return (await github.rest.repos.getReleaseByTag({ ...repo, tag: version })).data;
   } catch (error) {
     if (error.status !== 404) throw error;
-    return null;
+    // The tag endpoint only exposes published releases. Authenticated release
+    // listings also contain drafts, including one left by an interrupted upload.
+    const releases = await github.paginate(github.rest.repos.listReleases, { ...repo, per_page: 100 });
+    return releases.find(release => release.tag_name === version) || null;
   }
 }
 
-function validateRelease(release, sha, complete = !release.draft) {
+function validateRelease(release, sha, complete = !release?.draft) {
+  if (!release) throw new Error('Native release could not be found');
   const version = versionFor(sha);
   if (release.tag_name !== version || release.target_commitish !== sha || !release.prerelease) {
     throw new Error('Existing native release belongs to different inputs');
@@ -118,7 +125,7 @@ async function reusableRuns({ github, context, tree, download = downloadRecord,
   retry = Number(process.env.GITHUB_RUN_ATTEMPT || 1) > 1 }) {
   const repo = context.repo;
   const repository = `${repo.owner}/${repo.repo}`;
-  const expected = Object.fromEntries(Object.keys(INPUTS).map(key => [key, fingerprint(key, tree)]));
+  const expected = Object.fromEntries(Object.keys(INPUTS).map(key => [key, fingerprint(key, tree, true)]));
   const chosen = { aarch64_run: '', riscv64_run: '', linker_run: '' };
   const { data } = await github.rest.actions.listWorkflowRunsForRepo({
     ...repo, status: 'success', per_page: 100,
@@ -144,7 +151,7 @@ async function reusableRuns({ github, context, tree, download = downloadRecord,
       const record = await download(repository, run, name);
       if (record.schema !== 1 || record.component !== component || record.target !== target
           || String(record.run_id) !== String(run.id)
-          || record.source_fingerprint !== expected[component]
+          || !/^[0-9a-f]{64}$/.test(record.source_fingerprint || '')
           || !/^[0-9a-f]{40}$/.test(record.source_commit || '')) return false;
       if (!sources.has(record.source_commit)) {
         const { data: commit } = await github.rest.git.getCommit({ ...repo, commit_sha: record.source_commit });
@@ -155,7 +162,10 @@ async function reusableRuns({ github, context, tree, download = downloadRecord,
       const source = sources.get(record.source_commit);
       const runMatches = record.source_commit === run.head_sha || (run.event === 'pull_request'
         && source.commit.parents.length === 2 && source.commit.parents.some(parent => parent.sha === run.head_sha));
-      return runMatches && fingerprint(component, source.tree) === expected[component];
+      // Validate the original complete record before comparing actual compiler
+      // inputs. Publication-only edits must not invalidate already-built binaries.
+      return runMatches && fingerprint(component, source.tree) === record.source_fingerprint
+        && fingerprint(component, source.tree, true) === expected[component];
     };
     for (const [index, key] of ['aarch64_run', 'riscv64_run'].entries()) {
       if (!chosen[key] && await matches('host', TARGETS[index])) chosen[key] = String(run.id);
