@@ -77,6 +77,7 @@ class DependencyPreparationTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"SCARLET_RUST_REV": "a" * 40}):
                 prepare.prepare(source, inputs)
             self.assertEqual(target.read_text(), "fork-owned source stays unchanged\n")
+            self.assertEqual((source / "git-commit-info").read_text(), f'{"a" * 40}\n{"a" * 9}\nunknown\n')
             self.assertEqual((source / "native-host-deps/target-lexicon-0.13.3/triple.txt").read_text(), "scarlet\n")
             self.assertFalse((source / "native-host-deps/target-lexicon-0.13.3/.git").exists())
             for version in ("0.8.9", "0.9.0"):
