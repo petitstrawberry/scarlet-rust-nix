@@ -38,11 +38,10 @@ jobs:
               [file.filename, file.previous_filename].filter(Boolean));
             const sameRepository = context.payload.pull_request.head.repo.full_name
               === `${context.repo.owner}/${context.repo.repo}`;
-            const shared = path => [
-              'flake.nix', 'flake.lock', 'scripts/native-artifacts.cjs',
-              '.github/workflows/build.yml',
-              '.github/workflows/native-toolchain-release.yml',
-            ].includes(path) || path.startsWith('nix/');
+            // Native build commands live in their reusable workflows. Release
+            // orchestration changes run automation tests without recompiling Rust.
+            const shared = path => ['flake.nix', 'flake.lock'].includes(path)
+              || path.startsWith('nix/');
             const host = paths.some(path => shared(path)
               || path.startsWith('native-host/')
               || path === '.github/workflows/native-host.yml'
