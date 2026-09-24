@@ -49,14 +49,46 @@ architectures. Only the current main revision can publish.
 Each successful main revision publishes an immutable prerelease named
 `v0.1.0-dev.<12-character-packaging-commit>`. Both architecture archives,
 checksums and manifests are uploaded to a draft before it becomes public.
-The workflow then commits both archive hashes, the versioned URL/prefix and
-the `current` symlink atomically to Scarlet's `dev` branch. A concurrent Scarlet
-commit is preserved by retrying from its new tip; toolchain downgrades are
-rejected. `SCARLET_RUST_NIX_UPDATE_TOKEN` needs contents write access to Scarlet.
+The release also includes a small `rust-toolchain-bundle-<version>.tar.gz`
+archive and its SHA-256 checksum. It contains an architecture-independent
+`bundle.toml` referencing those exact archive URLs and hashes, plus a filesystem
+overlay selecting that version through the `current` symlink. The workflow
+publishes only to this repository using `GITHUB_TOKEN`. It does not modify
+Scarlet; adopting or updating the bundle is a separate consumer decision.
 
 Retry the main **Build Scarlet Rust Toolchain** workflow to recover a failed
-publication or consumer update. It reuses completed components and never
-overwrites a published release. Release creation does not verify guest execution.
+publication. It reuses completed components and never overwrites a published
+release. Release creation does not verify guest execution.
+
+## Select a release
+
+Choose an exact version from this repository's releases. For example, set
+`version` to its `v0.1.0-dev.<12-character-packaging-commit>` tag, then download
+and verify the small bundle archive:
+
+```sh
+gh release download "$version" --repo petitstrawberry/scarlet-rust-nix \
+  --pattern "rust-toolchain-bundle-$version.tar.gz" \
+  --pattern "rust-toolchain-bundle-$version.tar.gz.sha256"
+shasum -a 256 -c "rust-toolchain-bundle-$version.tar.gz.sha256"
+tar -xzf "rust-toolchain-bundle-$version.tar.gz"
+```
+
+The extracted `rust-toolchain/` directory is a complete bundle. Place it where
+you maintain your image bundles, then select its manifest in an image definition:
+
+```toml
+[[images.rootfs.layers]]
+kind = "bundle"
+path = "path/to/rust-toolchain/bundle.toml"
+```
+
+The archive URLs, both architecture hashes, installation prefix and `current`
+symlink select the same immutable release. The image builder downloads only the
+native archive for its architecture. The base image must provide the compatible
+`/bin/scarlet-ld`; the required Scarlet revision is recorded in the bundle and
+package manifests. Preserve any existing bundle selection until you choose to
+update it. Downloading or publishing a newer release does not change that choice.
 
 ## Package exact artifacts manually
 
@@ -75,4 +107,5 @@ scripts/build-native-toolchain-release.sh \
 
 The output contains a deterministic `tar.zst`, SHA-256 sidecar, complete package
 manifest and a Scarlet bundle manifest fragment. The automatic release workflow
-uses these same packaging commands without rebuilding matching Rust artifacts.
+uses these same packaging commands, then assembles both architectures with
+`scripts/package-native-bundle.py` without rebuilding matching Rust artifacts.

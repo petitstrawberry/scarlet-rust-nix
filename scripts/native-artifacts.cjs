@@ -9,7 +9,8 @@ const TARGETS = ['aarch64-unknown-scarlet', 'riscv64gc-unknown-scarlet'];
 const COMMON = ['flake.nix', 'flake.lock', 'nix/', 'scripts/native-artifacts.cjs',
   '.github/workflows/build.yml', '.github/workflows/native-toolchain-release.yml'];
 const RELEASE_ONLY = new Set(['scripts/native-artifacts.cjs',
-  '.github/workflows/build.yml', '.github/workflows/native-toolchain-release.yml']);
+  '.github/workflows/build.yml', '.github/workflows/native-toolchain-release.yml',
+  'native-host/README.md', 'native-linker/README.md']);
 const INPUTS = {
   host: [...COMMON, 'native-host/', '.github/workflows/native-host.yml',
     'scripts/build-native-host.sh', 'scripts/prepare-native-host.py', 'scripts/check-native-host-llvm.py'],
@@ -20,7 +21,8 @@ const INPUTS = {
 function fingerprint(component, tree, buildInputsOnly = false) {
   if (!INPUTS[component]) throw new Error(`Unknown native component: ${component}`);
   const inputs = INPUTS[component].filter(input => !buildInputsOnly || !RELEASE_ONLY.has(input));
-  const entries = tree.filter(entry => entry.type !== 'tree' && inputs.some(input =>
+  const entries = tree.filter(entry => entry.type !== 'tree'
+    && (!buildInputsOnly || !RELEASE_ONLY.has(entry.path)) && inputs.some(input =>
     input.endsWith('/') ? entry.path.startsWith(input) : entry.path === input))
     .map(({ mode, type, sha, path }) => [mode, type, sha, path])
     .sort((a, b) => Buffer.compare(Buffer.from(a[3]), Buffer.from(b[3])));
@@ -58,7 +60,7 @@ function inventory(version) {
     `native-rust-${arch}-${version}.tar.zst.sha256`,
     `native-rust-${arch}-${version}.manifest.json`,
     `manifest-native-rust-${arch}.toml`,
-  ]);
+  ]).concat(`rust-toolchain-bundle-${version}.tar.gz`, `rust-toolchain-bundle-${version}.tar.gz.sha256`);
 }
 
 async function findRelease(github, repo, version) {
@@ -219,7 +221,7 @@ async function publish({ github, context, core, directory = 'release-assets', ex
     if (!release) {
       execute('gh', ['release', 'create', version, '--repo', repository, '--target', context.sha,
         '--draft', '--prerelease', '--title', `Scarlet native Rust ${version}`,
-        '--notes', `Built from ${context.sha}. Includes AArch64 and RV64 rustc, Cranelift, static std and Wild. Guest execution is not verified by this build.`], { stdio: 'inherit' });
+        '--notes', `Built from ${context.sha}. Includes AArch64 and RV64 rustc, Cranelift, static std, Wild and an installable rust-toolchain-bundle archive. Consumers select the release explicitly; Scarlet is not updated automatically. Guest execution is not verified by this build.`], { stdio: 'inherit' });
     }
     execute('gh', ['release', 'upload', version, '--repo', repository, '--clobber', ...files], { stdio: 'inherit' });
     validateRelease(await findRelease(github, context.repo, version), context.sha, true);

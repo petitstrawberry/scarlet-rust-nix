@@ -31,21 +31,6 @@ jobs:
         with:
           script: |
             await require('./scripts/native-artifacts.cjs').plan({ github, context, core });
-      - name: Check bundle update credentials before building
-        if: steps.plan.outputs.skip != 'true'
-        env:
-          UPDATE_TOKEN: ${{ secrets.SCARLET_RUST_NIX_UPDATE_TOKEN }}
-        run: test -n "$UPDATE_TOKEN"
-      - name: Check access to the Scarlet consumer
-        if: steps.plan.outputs.skip != 'true'
-        uses: actions/github-script@v8
-        with:
-          github-token: ${{ secrets.SCARLET_RUST_NIX_UPDATE_TOKEN }}
-          script: |
-            const { data } = await github.rest.repos.get({ owner: 'petitstrawberry', repo: 'Scarlet' });
-            if (!data.permissions?.push) {
-              throw new Error('SCARLET_RUST_NIX_UPDATE_TOKEN needs contents write access to petitstrawberry/Scarlet');
-            }
 
   aarch64:
     needs: plan
@@ -126,7 +111,7 @@ jobs:
           retention-days: 30
 
   release:
-    name: Publish both architectures and update Scarlet
+    name: Publish native toolchain and bundle
     needs: [plan, package]
     if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.skip != 'true' && (needs.plan.outputs.published == 'true' || needs.package.result == 'success') }}
     runs-on: ubuntu-latest
@@ -147,20 +132,11 @@ jobs:
           pattern: native-toolchain-release-*
           path: release-assets
           merge-multiple: true
-      - name: Recover metadata when retrying a published release
-        if: needs.plan.outputs.published == 'true'
-        run: gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --pattern '*.manifest.json' --pattern '*.sha256' --dir release-assets
+      - name: Assemble the installable bundle
+        if: needs.plan.outputs.published != 'true'
+        run: python3 scripts/package-native-bundle.py --directory release-assets --packaging-commit "$GITHUB_SHA"
       - name: Publish the complete prerelease
-        id: publish
         uses: actions/github-script@v8
         with:
           script: |
-            require('./scripts/update-native-bundle.cjs').releaseInputs('release-assets', context.sha);
             await require('./scripts/native-artifacts.cjs').publish({ github, context, core });
-      - name: Update the Scarlet bundle and current symlink atomically
-        if: steps.publish.outputs.published == 'true'
-        uses: actions/github-script@v8
-        with:
-          github-token: ${{ secrets.SCARLET_RUST_NIX_UPDATE_TOKEN }}
-          script: |
-            await require('./scripts/update-native-bundle.cjs')({ github, context, core });

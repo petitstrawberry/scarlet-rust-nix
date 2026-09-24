@@ -25,7 +25,7 @@ and artifact identity. A successful build does not imply guest execution.
 
 Use `scripts/fetch-native-host.sh` with an exact Actions run ID to download a
 native-host artifact. Main's versioned packaging workflow automatically selects
-matching native-host and Wild artifacts for both architectures and updates the
-Scarlet bundle after publication. Generated logs,
+matching native-host and Wild artifacts for both architectures and publishes an
+installable bundle in this repository. Scarlet selects its version separately. Generated logs,
 source copies, and build directories are Actions artifacts or ignored local
 outputs, never checked-in source.
