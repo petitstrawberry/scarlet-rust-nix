@@ -182,12 +182,13 @@ binaries; the job fails instead of building those projects if substitution is
 unavailable. The fixed vendored Rust source is copied out of the Nix store before
 preparing the `native-host/` dependency adaptations.
 
-Relevant pull requests build AArch64.
+Relevant pull requests build both AArch64 and RV64.
 The main toolchain workflow first builds and uploads the cross toolchain, then
 runs the affected native-host and native-linker jobs. Its final CI check waits
 for all required artifacts; native jobs cannot race an empty Cachix cache.
-Once the workflow is available on the repository default branch, it can also be
-started manually for AArch64 or RISC-V64:
+After merging, the main workflow automatically publishes both architectures and
+updates Scarlet's bundle. Standalone component builds can also be started for
+AArch64 or RISC-V64:
 
 ```sh
 gh workflow run native-host.yml --ref main \
@@ -247,7 +248,21 @@ build, the backend and static target libraries.
 toolchain manifest records the exact Scarlet commit required by the bundle; the
 runtime loader is deliberately absent from the archive. See
 [`native-toolchain/README.md`](native-toolchain/README.md) for the package
-contract and local command. The **Package Scarlet Native Rust Toolchain** manual
-workflow takes exact native-host and native-linker run IDs, uploads both
-architectures as temporary Actions artifacts, and creates a draft release only
-when explicitly requested.
+contract and local command. The **Publish Scarlet Native Rust Toolchain**
+workflow runs after main's cross-toolchain checks, cache uploads and pins succeed.
+It reuses successful PR artifacts only when their recorded build inputs match
+the actual Git trees; missing or expired components are built in Actions.
+Both architectures are packaged before publishing a prerelease named
+`v0.1.0-dev.<packaging-commit>`. A superseded main run cannot advance the consumer.
+
+Publication updates `bundles/rust-toolchain/bundle.toml` and its `current` symlink
+together in a single commit on `petitstrawberry/Scarlet`'s `dev` branch. The URL,
+per-architecture SHA-256 values and versioned installation prefix stay pinned;
+consumers do not download a mutable `latest` archive. The existing
+`SCARLET_RUST_NIX_UPDATE_TOKEN` must have contents write access to Scarlet as well
+as this repository. Credential availability is checked before missing native
+builds start. The token also allows the bundle update to trigger Scarlet's CI.
+
+Rerunning the main workflow is safe: successful component uploads can be reused,
+published versions are never replaced, and an already-current bundle is a no-op.
+No guest execution claim is added by publishing the build.

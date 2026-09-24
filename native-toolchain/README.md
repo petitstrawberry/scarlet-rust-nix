@@ -39,7 +39,26 @@ The Rust license files in `native-toolchain/licenses/rust` are copied from the
 Rust fork revision currently pinned by this repository. They are packaged with
 Wild's licenses because the bootstrap sysroot does not install Rust's notices.
 
-## Build a release candidate
+## Automatic releases
+
+Relevant PRs build AArch64 and RV64 after the cross toolchain has been checked
+and uploaded to Cachix. Main then reuses artifacts whose build-input hashes
+match the source Git trees, builds any missing components, and packages both
+architectures. Only the current main revision can publish.
+
+Each successful main revision publishes an immutable prerelease named
+`v0.1.0-dev.<12-character-packaging-commit>`. Both architecture archives,
+checksums and manifests are uploaded to a draft before it becomes public.
+The workflow then commits both archive hashes, the versioned URL/prefix and
+the `current` symlink atomically to Scarlet's `dev` branch. A concurrent Scarlet
+commit is preserved by retrying from its new tip; toolchain downgrades are
+rejected. `SCARLET_RUST_NIX_UPDATE_TOKEN` needs contents write access to Scarlet.
+
+Retry the main **Build Scarlet Rust Toolchain** workflow to recover a failed
+publication or consumer update. It reuses completed components and never
+overwrites a published release. Release creation does not verify guest execution.
+
+## Package exact artifacts manually
 
 Download exact successful Actions artifacts first:
 
@@ -55,6 +74,5 @@ scripts/build-native-toolchain-release.sh \
 ```
 
 The output contains a deterministic `tar.zst`, SHA-256 sidecar, complete package
-manifest and a Scarlet bundle manifest fragment. The manual release workflow
-does the same for AArch64 and RV64 and only creates a draft GitHub Release when
-`publish` is selected.
+manifest and a Scarlet bundle manifest fragment. The automatic release workflow
+uses these same packaging commands without rebuilding matching Rust artifacts.

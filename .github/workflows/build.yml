@@ -39,9 +39,10 @@ jobs:
             const sameRepository = context.payload.pull_request.head.repo.full_name
               === `${context.repo.owner}/${context.repo.repo}`;
             const shared = path => [
-              'flake.nix', 'flake.lock', 'nix/vendor-rust-src.nix',
+              'flake.nix', 'flake.lock', 'scripts/native-artifacts.cjs',
               '.github/workflows/build.yml',
-            ].includes(path);
+              '.github/workflows/native-toolchain-release.yml',
+            ].includes(path) || path.startsWith('nix/');
             const host = paths.some(path => shared(path)
               || path.startsWith('native-host/')
               || path === '.github/workflows/native-host.yml'
@@ -85,7 +86,7 @@ jobs:
 
       - name: Check automation scripts
         run: |
-          node --test scripts/merge-rust-update.test.cjs
+          node --test scripts/*.test.cjs
           python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Free Disk Space (Ubuntu)
@@ -131,7 +132,13 @@ jobs:
   native_host:
     needs: [build, native_changes]
     if: github.event_name == 'pull_request' && needs.native_changes.outputs.host == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-unknown-scarlet, riscv64gc-unknown-scarlet]
     uses: ./.github/workflows/native-host.yml
+    with:
+      target: ${{ matrix.target }}
     secrets: inherit
 
   native_linker:
@@ -193,4 +200,14 @@ jobs:
     uses: ./.github/workflows/protect-consumers.yml
     with:
       latest_rev: ${{ github.sha }}
+    secrets: inherit
+
+  native_release:
+    name: Publish native toolchain and update Scarlet
+    needs: [build, ci, pin]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.build.result == 'success' && needs.ci.result == 'success' && needs.pin.result == 'success' }}
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/native-toolchain-release.yml
     secrets: inherit
