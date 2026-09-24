@@ -7,3 +7,7 @@ __pycache__/
 
 /native-host-output/
 /native-toolchain-output/
+
+# Build logs and guest experiments are artifacts, not source inputs.
+**/evidence/
+/native-host/guest/

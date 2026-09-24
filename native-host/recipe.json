@@ -1,85 +1,64 @@
 {
-  "base_rust_revision": "39c689a4859b9d8ee1828720135defd125c03d31",
   "packages": [
     {
       "name": "libloading",
       "version": "0.8.9",
       "root_patch": "libloading_08",
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/libloading-0.8.9-scarlet.patch"
-        },
-        {
-          "kind": "copy",
-          "input": "files/libloading_scarlet.rs",
-          "destination": "src/scarlet.rs"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/rust_libloading.git",
+        "revision": "179bc39a80b9c7ac9955c4cdc30b0c7c938ee813"
+      },
+      "operations": []
     },
     {
       "name": "libloading",
       "version": "0.9.0",
       "root_patch": "libloading_09",
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/libloading-0.9.0-scarlet.patch"
-        },
-        {
-          "kind": "copy",
-          "input": "files/libloading_scarlet.rs",
-          "destination": "src/scarlet.rs"
-        },
-        {
-          "kind": "patch",
-          "input": "patches/libloading-0.9.0-adapter.patch"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/rust_libloading.git",
+        "revision": "49abf0a1f5cdd2635116f38ece4ed3e1dc193fa2"
+      },
+      "operations": []
     },
     {
       "name": "stacker",
       "version": "0.1.21",
       "root_patch": "stacker",
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/stacker-0.1.21-scarlet.patch"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/stacker.git",
+        "revision": "525efa8045f3fa4e29f8abd568d83c41da6f9bb7"
+      },
+      "operations": []
     },
     {
       "name": "target-lexicon",
       "version": "0.13.3",
       "root_patch": null,
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/target-lexicon-0.13.3-scarlet.patch"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/target-lexicon.git",
+        "revision": "45d40252406452ef3a953dd623a8968020d7f5bf"
+      },
+      "operations": []
     },
     {
       "name": "tempfile",
       "version": "3.23.0",
       "root_patch": "tempfile",
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/tempfile-3.23.0-scarlet.patch"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/tempfile.git",
+        "revision": "601a6cb8784d11e12ee90c5a561c5d2bda58da63"
+      },
+      "operations": []
     },
     {
       "name": "getrandom",
       "version": "0.3.3",
       "root_patch": "getrandom",
-      "operations": [
-        {
-          "kind": "patch",
-          "input": "patches/getrandom-0.3.3-scarlet.patch"
-        }
-      ]
+      "git": {
+        "url": "https://github.com/petitstrawberry/getrandom.git",
+        "revision": "6e7cf426930802b8f4f06d01c1d686f5e998a4ff"
+      },
+      "operations": []
     }
   ]
 }

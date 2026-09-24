@@ -1,50 +1,30 @@
-# Experimental native Scarlet compiler inputs
+# Native Scarlet Rust compiler build
 
-These inputs apply to the pinned Rust fork revision
-`39c689a4859b9d8ee1828720135defd125c03d31`. The ordinary published cross toolchain
-is unchanged. `scripts/prepare-native-host.py` applies them to a fresh writable
-copy of the existing vendored source, never to registry or installed compiler
-caches. `recipe.json` records the exact dependency versions; preparation records
-all patch and adapter hashes.
+This directory defines the native `rustc` and Cranelift build inputs used by
+`scarlet-rust-nix`. The Rust fork revision is pinned by `flake.nix`; compiler,
+standard-library, CRT, and backend changes belong in that fork. `recipe.json`
+pins dependency versions and exact fork commits. `scripts/prepare-native-host.py`
+prepares only a fresh writable copy of the vendored source; it does not edit
+registry caches or an installed toolchain.
 
-The Rust patch enables native dynamic linking and separates executable startup
-into `scarlet-crt0.o`, allowing std to remain statically linked into rustc_driver.
-It adds native compiler cfg paths, owned-memory metadata reads, executable-path
-lookup, and Cranelift AOT support. The compiler marks its successfully linked
-Scarlet ELF outputs with OSABI83 after checking the ELF architecture/type; the
-packager does not relabel foreign executables. Executable startup CRT objects
-may retain generic ELF OSABI0.
+The Scarlet adaptations of
+[libloading](https://github.com/petitstrawberry/rust_libloading),
+[stacker](https://github.com/petitstrawberry/stacker),
+[target-lexicon](https://github.com/petitstrawberry/target-lexicon),
+[tempfile](https://github.com/petitstrawberry/tempfile), and
+[getrandom](https://github.com/petitstrawberry/getrandom) live in pinned forks.
+Their exact commits are listed in `recipe.json`.
 
-Dependency patches cover libloading0.8.9/0.9.0, stacker0.1.21, target-lexicon0.13.3,
-tempfile3.23.0, and getrandom0.3.3. The getrandom backend requires actual registered
-entropy (for QEMU, VirtIO RNG); it never accepts Scarlet's pseudo-random fallback.
-The initial stacker backend uses aligned allocations without guard pages.
-Tempfile supports native named creation and keeping/overwrite rename; unsupported
-identity/permission/atomic no-clobber operations return errors explicitly.
-Scarlet compiler builds also select blake3's pure Rust implementation; its
-optional AArch64 C implementation requires libc headers that Scarlet does not
-provide. Build-host targets retain their normal blake3 features.
+`prepare_host_build.py` emits an isolated stage2 bootstrap configuration.
+`scripts/build-native-host.sh` builds and packages the result in Actions using
+build-host LLVM and a Scarlet-native Cranelift backend. The package contains the
+compiler, matching private driver/backend libraries, and matching target std.
+Rust std remains statically linked into `rustc_driver`; no OS-wide shared std
+is installed. The build's manifest records the Rust revision, target, backend,
+and artifact identity. A successful build does not imply guest execution.
 
-`prepare_host_build.py` emits the actual bootstrap config and command. The
-build-host compiler uses cached LLVM; the Scarlet compiler defaults to Cranelift.
-The optional dummy backend is only a frontend diagnostic and cannot generate
-code. The download helper rejects dummy artifacts. Native compiler artifacts
-omit the bootstrap sysroot's `rustlib/src` and `rustlib/rustc-src` source
-components: they are not needed to run rustc and would otherwise copy the full
-checkout, including foreign-architecture ELF test fixtures, into the runtime
-artifact.
-
-Before bootstrap, a tiny build-host LLVM client is linked and executed using
-`llvm-config --link-static --system-libs`. This checks that the Nix shell exposes
-LLVM's system dependencies (including libxml2) before compiling rustc. Its result
-is saved in `host-llvm.log` alongside the other build evidence.
-
-A successful Actions artifact proves cross-build and ELF identity only. Native
-startup, Rust code generation, assembly/linker integration, and executing the
-compiled program still require Scarlet guest evidence. In particular, Cranelift
-needs a native assembler for inline/global assembly and a native linker for
-executables. The separate [native Wild port](https://github.com/petitstrawberry/scarlet-rust-nix/pull/21)
-now supplies the linker and passes native object/archive/Rust std link-and-run
-tests on AArch64 and RV64. Integrating it with this compiler still requires the
-full guest compile-and-run probe. No LLVM/C++ native runtime is silently bundled
-or assumed.
+Use `scripts/fetch-native-host.sh` with an exact Actions run ID to download a
+native-host artifact. The separate versioned packaging workflow combines exact
+native-host and Wild run IDs into the distributable toolchain. Generated logs,
+source copies, and build directories are Actions artifacts or ignored local
+outputs, never checked-in source.

@@ -6,10 +6,10 @@ Scarlet. `scarlet-rust-nix` packages the compiler and build-time linker:
 - `rustc` and its toolchain-private `librustc_driver` shared object
 - the Cranelift codegen backend
 - the matching target's static standard-library inputs
-- Wild as `bin/wild`, with a `bin/rust-lld` toolchain alias whose help,
-  diagnostics and version identity follow the invoked command name
+- Wild as `bin/wild`, with a `bin/rust-lld` toolchain alias whose display
+  name is set by the native-linker build
 
-Scarlet owns `/system/bin/scarlet-ld`. The runtime loader is coupled to Scarlet's
+Scarlet owns `/bin/scarlet-ld`. The runtime loader is coupled to Scarlet's
 `exec`, VM and native ABI, so it is not copied into this repository's releases.
 Every native Rust archive instead records the exact required Scarlet commit and
 loader path in `manifest.json`.
@@ -38,8 +38,6 @@ are reported as unsupported capabilities until that work passes.
 The Rust license files in `native-toolchain/licenses/rust` are copied from the
 Rust fork revision currently pinned by this repository. They are packaged with
 Wild's licenses because the bootstrap sysroot does not install Rust's notices.
-`rust-lld --version` retains the Wild name for implementation attribution, while
-normal help and diagnostics present `rust-lld` as the command being used.
 
 ## Build a release candidate
 

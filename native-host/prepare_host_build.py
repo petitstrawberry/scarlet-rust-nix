@@ -28,7 +28,7 @@ def executable(value):
 def make_config(args, host):
     q = lambda value: json.dumps(str(value))
     boolean = lambda value: "true" if value else "false"
-    return f'''# Generated for Rust source 39c689 and its native Scarlet patches.
+    return f'''# Generated for the pinned Scarlet Rust fork source.
 change-id = "ignore"
 
 [build]
@@ -121,7 +121,7 @@ def main():
     if args.build_dir == source / "build":
         p.error("use a dedicated build directory, not the checkout's default build directory")
     if output.exists():
-        p.error("output already exists; preserve old evidence and choose a fresh recipe directory")
+        p.error("output already exists; choose a fresh recipe directory")
     if args.vendor and not (source / "vendor").is_dir():
         p.error("--vendor requires the prepared source's vendor directory")
     version = subprocess.check_output([str(args.stage0_rustc), "-Vv"], text=True)
@@ -130,7 +130,7 @@ def main():
         p.error("stage0 must run on a supported Linux or macOS build host")
     host = hosts[0]
     target_list = subprocess.check_output([str(args.stage0_rustc), "--print", "target-list"], text=True).splitlines()
-    # Source 39c689 lists Scarlet among STAGE0_MISSING_TARGETS; its sanity check
+    # The fork lists Scarlet among STAGE0_MISSING_TARGETS; its sanity check
     # deliberately rejects a patched stage0 containing one of those targets.
     env = {}
     if any(target.endswith("-scarlet") for target in target_list):

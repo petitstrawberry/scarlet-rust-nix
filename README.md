@@ -177,12 +177,15 @@ $out/
 
 The separate **Build Scarlet Native Host** Actions workflow cross-builds a compiler
 that runs inside Scarlet. It does not replace the existing Linux/macOS toolchains
-or change their pinned Rust revision. LLVM 21, Clang and LLD are downloaded as Nix
+or use a different Rust revision. LLVM 21, Clang and LLD are downloaded as Nix
 binaries; the job fails instead of building those projects if substitution is
 unavailable. The fixed vendored Rust source is copied out of the Nix store before
-applying the experimental `native-host/` patches.
+preparing the `native-host/` dependency adaptations.
 
-Pushes to `feat/native-scarlet-host` and relevant pull requests build AArch64.
+Relevant pull requests build AArch64.
+The main toolchain workflow first builds and uploads the cross toolchain, then
+runs the affected native-host and native-linker jobs. Its final CI check waits
+for all required artifacts; native jobs cannot race an empty Cachix cache.
 Once the workflow is available on the repository default branch, it can also be
 started manually for AArch64 or RISC-V64:
 
@@ -192,8 +195,8 @@ gh workflow run native-host.yml --ref main \
 gh run list --workflow native-host.yml
 ```
 
-All attempts upload a `native-host-evidence-<target>` artifact with the bootstrap
-configuration, exact command, source patch identities, manifest and logs, including
+All attempts upload a `native-host-build-logs-<target>` artifact with the bootstrap
+configuration, exact command, pinned dependency revisions, manifest and logs, including
 compile failures. Successful builds additionally upload `native-host-<target>`:
 a sysroot tarball, SHA-256 checksum and manifest. Download one without compiling
 anything locally:
@@ -206,7 +209,7 @@ The download validates the checksum, target, run ID and Cranelift code-generatio
 capability, and extracts only into a new directory. Frontend-only `dummy`
 artifacts require an explicit `gh run download` for diagnostic work. The sysroot contains `bin/rustc`, its native shared libraries and
 the matching native standard-library rlibs. It must be installed in a Scarlet
-image together with `/system/bin/scarlet-ld`; Linux/macOS cannot run its compiler.
+image together with `/bin/scarlet-ld`; Linux/macOS cannot run its compiler.
 The default `cranelift` backend is built for native code generation without a
 native LLVM/C++ dependency. The optional `dummy` backend permits frontend
 diagnostics but cannot generate code.
@@ -216,7 +219,7 @@ those end-to-end checks are performed separately.
 
 Actions caches compiler intermediates and prepared source separately for each
 machine, backend, branch, fork and pinned Nix environment. Partial work is saved after a
-compile failure so a corrected patch can reuse it. A checksum-based source sync
+compile failure so a corrected source revision can reuse it. A checksum-based source sync
 preserves the timestamps of unchanged files and replaces changed files; the
 large vendor tree is restored from Nix rather than cached twice. External
 bootstrap toolchains and Nix store paths are never modified. The workflow neither
@@ -237,10 +240,10 @@ Native compiler and Wild artifacts can be promoted into architecture-specific,
 deterministic `tar.zst` release candidates without rebuilding Rust. The package
 is installed under `/opt/scarlet/toolchains/rust/<version>` and contains
 relative `librustc_driver` links beside both `rustc` and the Cranelift backend,
-a Wild-backed `rust-lld` alias with toolchain-facing CLI identity, the backend
-itself and static target libraries.
+a Wild-backed `rust-lld` alias with its display name set during the linker
+build, the backend and static target libraries.
 
-`/system/bin/scarlet-ld` remains part of the Scarlet repository and image. Each
+`/bin/scarlet-ld` remains part of the Scarlet repository and image. Each
 toolchain manifest records the exact Scarlet commit required by the bundle; the
 runtime loader is deliberately absent from the archive. See
 [`native-toolchain/README.md`](native-toolchain/README.md) for the package

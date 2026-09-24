@@ -9,12 +9,51 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: scarlet-toolchain-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  native_changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      host: ${{ steps.paths.outputs.host }}
+      linker: ${{ steps.paths.outputs.linker }}
+    steps:
+      - name: Select native builds affected by this PR
+        id: paths
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const paths = files.flatMap(file =>
+              [file.filename, file.previous_filename].filter(Boolean));
+            const sameRepository = context.payload.pull_request.head.repo.full_name
+              === `${context.repo.owner}/${context.repo.repo}`;
+            const shared = path => [
+              'flake.nix', 'flake.lock', 'nix/vendor-rust-src.nix',
+              '.github/workflows/build.yml',
+            ].includes(path);
+            const host = paths.some(path => shared(path)
+              || path.startsWith('native-host/')
+              || path === '.github/workflows/native-host.yml'
+              || /^scripts\/.*native[-_]host/.test(path));
+            const linker = paths.some(path => shared(path)
+              || path.startsWith('native-linker/')
+              || path === '.github/workflows/native-linker.yml'
+              || /^scripts\/.*native[-_]linker/.test(path));
+            // Fork PRs cannot upload the prerequisite closure to our Cachix.
+            core.setOutput('host', String(sameRepository && host));
+            core.setOutput('linker', String(sameRepository && linker));
+
   protect-consumers:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/protect-consumers.yml
@@ -89,16 +128,45 @@ jobs:
           nix build --no-link --print-out-paths '.#packages.${{ matrix.system }}.scarlet-rust-toolchain^*' \
             --accept-flake-config | cachix push "${CACHIX_CACHE_NAME}"
 
+  native_host:
+    needs: [build, native_changes]
+    if: github.event_name == 'pull_request' && needs.native_changes.outputs.host == 'true'
+    uses: ./.github/workflows/native-host.yml
+    secrets: inherit
+
+  native_linker:
+    needs: [build, native_changes]
+    if: github.event_name == 'pull_request' && needs.native_changes.outputs.linker == 'true'
+    uses: ./.github/workflows/native-linker.yml
+    secrets: inherit
+
   ci:
     name: Toolchain CI
-    needs: build
+    needs: [build, native_changes, native_host, native_linker]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require every build and cache upload
+      - name: Require cross builds, cache uploads, and affected native builds
         env:
-          RESULT: ${{ needs.build.result }}
-        run: test "${RESULT}" = success
+          CROSS: ${{ needs.build.result }}
+          CHANGES: ${{ needs.native_changes.result }}
+          HOST_REQUIRED: ${{ needs.native_changes.outputs.host }}
+          LINKER_REQUIRED: ${{ needs.native_changes.outputs.linker }}
+          HOST: ${{ needs.native_host.result }}
+          LINKER: ${{ needs.native_linker.result }}
+        run: |
+          test "$CROSS" = success
+          case "$CHANGES" in success|skipped) ;; *) exit 1 ;; esac
+          if [[ "$HOST_REQUIRED" == true ]]; then
+            test "$HOST" = success
+          else
+            test "$HOST" = skipped
+          fi
+          if [[ "$LINKER_REQUIRED" == true ]]; then
+            test "$LINKER" = success
+          else
+            test "$LINKER" = skipped
+          fi
 
   merge-update:
     name: Merge checked Rust update

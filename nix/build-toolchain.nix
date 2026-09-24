@@ -41,6 +41,14 @@ let
   targetConfigureFlags = lib.concatMap (target: [
     "--set=target.${target}.optimized-compiler-builtins=false"
   ]) noOptimizedCompilerBuiltinsTargetTriples;
+  startupToolFlags = lib.concatMap (target: [
+    "--set=target.${target}.cc=${lib.getExe' llvmPackages.clang-unwrapped "clang"}"
+    "--set=target.${target}.linker=${lib.getExe' llvmPackages.lld "lld"}"
+    "--set=target.${target}.rpath=false"
+  ]) (lib.filter (target:
+    lib.hasSuffix "-unknown-scarlet" target
+    && (lib.hasPrefix "aarch64-" target || lib.hasPrefix "riscv64" target)
+  ) targetTriples);
 
   baseRustc = callPackage "${nixpkgsPath}/pkgs/development/compilers/rust/rustc.nix" {
     inherit version;
@@ -79,6 +87,23 @@ baseRustc.overrideAttrs (old: {
 
   src = vendoredRustSrc;
 
+  # Nixpkgs' x86_64 host linker policy must not disable LLD for Scarlet std.
+  # Keep it for stage0 bootstrap and host crates; Scarlet uses stage1 or later.
+  env =
+    let
+      inheritedFlags = lib.splitString " " old.env.RUSTFLAGS;
+      isHostLinkerFlag = flag: lib.elem flag [
+        "-Clinker-features=-lld"
+        "-Clink-self-contained=-linker"
+      ];
+      hostLinkerFlags = lib.concatStringsSep " " (lib.filter isHostLinkerFlag inheritedFlags);
+    in
+    old.env // lib.optionalAttrs (hostTriple == "x86_64-unknown-linux-gnu") {
+      RUSTFLAGS = lib.concatStringsSep " " (lib.filter (flag: !isHostLinkerFlag flag) inheritedFlags);
+      RUSTFLAGS_BOOTSTRAP = hostLinkerFlags;
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = hostLinkerFlags;
+    };
+
   nativeBuildInputs = old.nativeBuildInputs ++ [
     ninja
   ];
@@ -104,7 +129,8 @@ baseRustc.overrideAttrs (old: {
       "--target=${targetList}"
       "--tools=${toolchainToolList}"
     ]
-    ++ targetConfigureFlags;
+    ++ targetConfigureFlags
+    ++ startupToolFlags;
 
   postPatch = ''
     patchShebangs src/etc
