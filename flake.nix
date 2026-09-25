@@ -59,8 +59,8 @@
       ];
       noOptimizedCompilerBuiltinsTargetTriples = scarletTargetTriples ++ nixpkgsCompilerTargetTriples;
 
-      rustRev = "fa1ebe06ff7f882482a72e4ff98a681259a207e6";
-      rustHash = "sha256-q3Bur/ZQOsMJDdMowSU+tskQnhEyHfZzqpJpCRQHIjQ=";
+      rustRev = "1199815fd1bb812929592e773e7b18ef5d716086";
+      rustHash = "sha256-RiqXFJYqdVrb+wrplXUNFxsb6udBEXkLnNeC7B7KGno=";
 
       forAllSystems = f: lib.genAttrs systems (system: f system);
     in
@@ -160,6 +160,7 @@
               pkgs.python3
               pkgs.git
               pkgs.rsync
+              pkgs.perl
               pkgs.cmake
               pkgs.ninja
               pkgs.pkg-config
