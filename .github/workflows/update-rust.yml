@@ -12,6 +12,11 @@ on:
         required: false
         default: "scarlet-target"
         type: string
+      hash_only:
+        description: "Compute source and vendor hash artifacts without opening an update PR."
+        required: false
+        default: false
+        type: boolean
   repository_dispatch:
     types: [rust-updated]
   schedule:
@@ -154,7 +159,7 @@ jobs:
     needs:
       - resolve
       - compute-hashes
-    if: needs.resolve.outputs.changed == 'true'
+    if: needs.resolve.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || inputs.hash_only != true)
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.SCARLET_RUST_NIX_UPDATE_TOKEN }}
