@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tomllib
@@ -45,6 +46,13 @@ def prepare(source, inputs, cargo=None):
         raise ValueError("source must be the Scarlet Rust fork")
     if not (source / ".cargo/config.toml").is_file() or not (source / "vendor").is_dir():
         raise ValueError("source must contain the published vendored dependencies")
+    rust_rev = os.environ.get("SCARLET_RUST_REV", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", rust_rev):
+        raise ValueError("SCARLET_RUST_REV must be a full Rust fork commit")
+    # Bootstrap reads this standard tarball metadata when its source has no
+    # .git directory. A revision-bearing rustc -vV also invalidates Cargo's
+    # cached crate metadata when the native compiler is updated.
+    (source / "git-commit-info").write_text(f"{rust_rev}\n{rust_rev[:9]}\nunknown\n")
     recipe = json.loads((inputs / "recipe.json").read_text())
     records = []
     for package in recipe["packages"]:
@@ -84,7 +92,7 @@ def prepare(source, inputs, cargo=None):
         subprocess.run([str(cargo), "update", "--offline", "-p",
                         f'target-lexicon@{lexicon["version"]}'],
                        cwd=backend_manifest.parent, env=environment, check=True)
-    marker.write_text(json.dumps({"schema": 2, "rust_revision": os.environ.get("SCARLET_RUST_REV"),
+    marker.write_text(json.dumps({"schema": 2, "rust_revision": rust_rev,
                                   "inputs": records, "native_compiler_built": False,
                                   "guest_execution_verified": False}, indent=2) + "\n")
     print(f"Prepared native Scarlet source: {source}")
