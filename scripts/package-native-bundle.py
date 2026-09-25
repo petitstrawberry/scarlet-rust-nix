@@ -51,7 +51,7 @@ def release_inputs(directory, packaging_commit, rust_revision):
             or manifest.get("components", {}).get("scarlet_ld", {}).get("included") is not False
             or not re.fullmatch(r"[0-9a-f]{40}", required.get("scarlet_commit", ""))
             or not all(manifest.get("capabilities", {}).get(key) is True for key in (
-                "rustc", "codegen", "linker", "static_target_std"
+                "rustc", "codegen", "linker", "static_target_std", "cargo"
             ))
         ):
             raise ValueError(f"Invalid native release manifest for {arch}")

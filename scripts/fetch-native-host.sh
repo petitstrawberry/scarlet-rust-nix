@@ -7,7 +7,7 @@ Usage: scripts/fetch-native-host.sh RUN_ID [TARGET] [DESTINATION]
 Download a successful native-host artifact from petitstrawberry/scarlet-rust-nix.
 TARGET defaults to aarch64-unknown-scarlet. DESTINATION must not exist.
 Requires GitHub CLI authentication and Python 3. No compiler build is performed.
-Only Cranelift artifacts with code generation are accepted; download frontend-only
+Only Cranelift artifacts with Cargo and code generation are accepted; download frontend-only
 dummy artifacts explicitly with `gh run download` for diagnostic work.
 Override SCARLET_NATIVE_HOST_REPOSITORY to download from a development fork.
 USAGE
@@ -46,6 +46,8 @@ if (manifest.get('schema') != 1 or manifest.get('status') != 'built-not-guest-ve
     raise SystemExit('Artifact manifest does not identify a successful build for this target/run')
 if manifest.get('backend') != 'cranelift' or manifest.get('capabilities', {}).get('codegen') is not True:
     raise SystemExit('Artifact has no Cranelift code generator. Frontend-only dummy artifacts must be downloaded explicitly with gh run download.')
+if manifest.get('capabilities', {}).get('cargo') is not True:
+    raise SystemExit('Artifact has no native Cargo')
 destination = destination.absolute()
 destination.parent.mkdir(parents=True, exist_ok=True)
 if destination.exists() or destination.is_symlink():
@@ -69,8 +71,9 @@ try:
                     shutil.copyfileobj(src, dst)
                 path.chmod(member.mode & 0o777)
     sysroot = staging / 'native-host'
-    if not (sysroot / 'bin/rustc').is_file():
-        raise SystemExit('Downloaded sysroot has no native rustc')
+    for tool in ('rustc', 'cargo'):
+        if not (sysroot / 'bin' / tool).is_file():
+            raise SystemExit(f'Downloaded sysroot has no native {tool}')
     shutil.copy2(source / 'manifest.json', sysroot / 'native-host-manifest.json')
     os.rename(sysroot, destination)
 finally:

@@ -96,6 +96,7 @@ def validate_manifests(
         or host.get("backend") != "cranelift"
         or host.get("exit_code") != 0
         or host.get("capabilities", {}).get("codegen") is not True
+        or host.get("capabilities", {}).get("cargo") is not True
     ):
         raise ValueError("native host manifest is not a successful Cranelift build")
     if (
@@ -306,6 +307,7 @@ def assemble(
     )
     target_info = TARGETS[target]
     rustc = regular_file(native_host / "bin/rustc", "native rustc")
+    cargo = regular_file(native_host / "bin/cargo", "native Cargo")
     wild = regular_file(native_linker / "bin/wild", "native Wild")
     driver = one_file(
         native_host.glob("lib/librustc_driver-*.so"), "native rustc_driver"
@@ -332,6 +334,9 @@ def assemble(
     rustc_elf = elf_identity(rustc, target_info["machine"])
     if rustc_elf["interpreter"] != INTERPRETER:
         raise ValueError(f"native rustc does not request {INTERPRETER}")
+    cargo_elf = elf_identity(cargo, target_info["machine"])
+    if cargo_elf["interpreter"] != INTERPRETER:
+        raise ValueError(f"native Cargo does not request {INTERPRETER}")
     wild_elf = elf_identity(wild, target_info["machine"])
     if wild_elf["interpreter"] not in (None, INTERPRETER):
         raise ValueError("native Wild requests an incompatible dynamic loader")
@@ -348,6 +353,7 @@ def assemble(
     runtime_libraries = {driver.name: driver}
     dependency_work = [
         (rustc, "bin/rustc"),
+        (cargo, "bin/cargo"),
         (driver, f"lib/{driver.name}"),
         (
             backend,
@@ -380,6 +386,7 @@ def assemble(
     try:
         package.mkdir()
         copy_file(rustc, package / "bin/rustc", 0o755)
+        copy_file(cargo, package / "bin/cargo", 0o755)
         copy_file(wild, package / "bin/wild", 0o755)
         for name, source in sorted(runtime_libraries.items()):
             copy_file(source, package / "lib" / name, 0o755)
@@ -439,7 +446,8 @@ def assemble(
             f"{scarlet_commit}.\n"
             "Scarlet owns the runtime loader; it is intentionally absent here.\n"
             "The target standard library is linked statically by default.\n"
-            "Cargo and procedural-macro execution are not claimed by this bundle.\n"
+            "Cargo is included; guest execution is not claimed by this build.\n"
+            "Procedural-macro execution is not claimed by this bundle.\n"
         )
         readme.chmod(0o644)
 
@@ -485,7 +493,7 @@ def assemble(
                 "codegen": True,
                 "linker": True,
                 "static_target_std": True,
-                "cargo": False,
+                "cargo": True,
                 "proc_macro": False,
                 "guest_verified": guest_verified,
             },

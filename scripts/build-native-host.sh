@@ -85,6 +85,11 @@ touch "$work_dir/.scarlet-native-host-work"
 rm -rf "$work_dir/prepared-source"
 cp -a "$SCARLET_VENDORED_SOURCE" "$work_dir/prepared-source"
 chmod -R u+w "$work_dir/prepared-source"
+libc_include="$work_dir/prepared-source/vendor/scarlet-libc/include"
+if [[ ! -f "$libc_include/stdio.h" || ! -f "$libc_include/sys/socket.h" ]]; then
+    echo "Vendored Scarlet libc headers are missing: $libc_include" >&2
+    exit 2
+fi
 mkdir -p "$work_dir/build" "$work_dir/wrappers" "$work_dir/cargo-home"
 export CARGO_HOME="$work_dir/cargo-home" CARGO_NET_OFFLINE=true RUSTC_BOOTSTRAP=1
 python3 "$repo_root/scripts/prepare-native-host.py" --source "$work_dir/prepared-source" \
@@ -101,12 +106,14 @@ cp "$work_dir/source/.scarlet-native-host-prepared.json" "$output_dir/source-pre
 # The native C target has no host libc. Keep the host compiler's wrapped cc/c++
 # available for bootstrap itself; only native compilations use these wrappers.
 export NATIVE_HOST_WRAPPERS="$work_dir/wrappers" NATIVE_HOST_CLANG_TARGET="$clang_target" NATIVE_HOST_CLANG_ARCH_FLAGS="$clang_arch_flags"
+export NATIVE_HOST_LIBC_INCLUDE="$work_dir/source/vendor/scarlet-libc/include"
 python3 - <<'PY'
 import os, pathlib, shlex
 out = pathlib.Path(os.environ['NATIVE_HOST_WRAPPERS'])
 for name, env in [('cc', 'SCARLET_CLANG'), ('cxx', 'SCARLET_CLANGXX')]:
     path = out / name
-    flags = ['--target=' + os.environ['NATIVE_HOST_CLANG_TARGET'], '-ffreestanding', '-fPIC']
+    flags = ['--target=' + os.environ['NATIVE_HOST_CLANG_TARGET'], '-ffreestanding', '-fPIC',
+             '-isystem', os.environ['NATIVE_HOST_LIBC_INCLUDE']]
     flags += shlex.split(os.environ['NATIVE_HOST_CLANG_ARCH_FLAGS'])
     # Last flags win if cc-rs also passes the Rust target's OS spelling.
     path.write_text('#!/usr/bin/env bash\nexec ' + shlex.quote(os.environ[env]) + ' "$@" ' + shlex.join(flags) + '\n')
@@ -135,9 +142,12 @@ build = pathlib.Path(os.environ['NATIVE_HOST_BUILD'])
 recipe = json.loads((out / 'recipe/build-command.json').read_text())
 build_host = recipe['build_host']
 sysroot = pathlib.Path(recipe['native_sysroot'])
+cargo = pathlib.Path(recipe['native_cargo'])
 std = pathlib.Path(recipe['stdlib_source'])
 if not (sysroot / 'bin/rustc').is_file() or not list(std.glob('libstd-*.rlib')):
     raise SystemExit('Native stage2 compiler or matching stage1 native standard library is missing')
+if not cargo.is_file():
+    raise SystemExit(f'Native stage2 Cargo is missing: {cargo}')
 package = out / 'sysroot'
 if package.exists():
     shutil.rmtree(package)
@@ -151,6 +161,7 @@ def runtime_sysroot_ignores(directory, names):
     return set()
 
 shutil.copytree(sysroot, package, symlinks=False, ignore=runtime_sysroot_ignores)
+shutil.copy2(cargo, package / 'bin/cargo')
 stdlib = package / 'lib/rustlib' / target / 'lib'
 shutil.copytree(std, stdlib, dirs_exist_ok=True, symlinks=False)
 if not list((package / 'lib').glob('librustc_driver*.so')):
@@ -166,7 +177,7 @@ for path in sorted(package.rglob('*')):
     with path.open('rb') as f:
         header = f.read(64)
         if header[:4] != b'\x7fELF':
-            if path == package / 'bin/rustc' or path.suffix in ('.so', '.o'):
+            if path in (package / 'bin/rustc', package / 'bin/cargo') or path.suffix in ('.so', '.o'):
                 raise SystemExit(f'Not ELF: {path}')
             continue
         if len(header) != 64 or header[4:7] != bytes([2, 1, 1]):
@@ -213,8 +224,8 @@ for path in sorted(package.rglob('*')):
                 has_tls |= kind == 7
         else:
             raise SystemExit(f'Unexpected native ELF type: {path}')
-        if path == package / 'bin/rustc' and interp != '/bin/scarlet-ld':
-            raise SystemExit('Native rustc must use /bin/scarlet-ld')
+        if path in (package / 'bin/rustc', package / 'bin/cargo') and interp != '/bin/scarlet-ld':
+            raise SystemExit(f'Native {path.name} must use /bin/scarlet-ld')
     with path.open('rb') as f:
         digest = hashlib.file_digest(f, 'sha256').hexdigest()
     elfs.append({'path': str(path.relative_to(package)), 'machine': machine, 'osabi': header[7],
@@ -222,7 +233,8 @@ for path in sorted(package.rglob('*')):
                  'interpreter': interp, 'has_tls': has_tls, 'sha256': digest, 'size': path.stat().st_size})
 manifest = json.loads((out / 'manifest.json').read_text())
 manifest.update(status='built-not-guest-verified', build_host=build_host, elf_files=elfs,
-                capabilities={'codegen': os.environ['NATIVE_HOST_BACKEND'] != 'dummy', 'guest_execution': False},
+                capabilities={'codegen': os.environ['NATIVE_HOST_BACKEND'] != 'dummy', 'cargo': True,
+                              'guest_execution': False},
                 note='ELF identity checks passed. Guest startup, dynamic relocations, compilation and linking remain to be tested.')
 (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 shutil.copy2(out / 'manifest.json', package / 'native-host-manifest.json')
@@ -232,5 +244,5 @@ with tarfile.open(archive, 'w:xz') as tar:
 with archive.open('rb') as f:
     checksum = hashlib.file_digest(f, 'sha256').hexdigest()
 (out / 'native-host.tar.xz.sha256').write_text(checksum + '  native-host.tar.xz\n')
-print(f'Native Scarlet compiler packaged: {archive} (not yet guest verified)')
+print(f'Native Scarlet compiler and Cargo packaged: {archive} (not yet guest verified)')
 PY

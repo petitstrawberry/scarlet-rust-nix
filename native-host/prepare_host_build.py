@@ -140,7 +140,7 @@ def main():
     output.mkdir(parents=True)
     config = output / "bootstrap.toml"
     config.write_text(make_config(args, host))
-    command = [str(args.python), str(source / "x.py"), "build", "compiler/rustc",
+    command = [str(args.python), str(source / "x.py"), "build", "compiler/rustc", "src/tools/cargo",
                "--config", str(config), "--build-dir", str(args.build_dir),
                "--stage", "2", "--host", args.target, "--target", args.target]
     if args.skip_stage0_validation:
@@ -152,6 +152,7 @@ def main():
         "build_host": host, "native_target": args.target, "backend": args.backend,
         "stage0_version": version.strip(), "compiled": False,
         "native_sysroot": str(native_sysroot),
+        "native_cargo": str(args.build_dir / host / "stage2-tools-bin" / "cargo"),
         "stdlib_source": str(args.build_dir / host / "stage1" / native_lib),
         "stdlib_destination": str(native_sysroot / native_lib),
         "packaging_note": "After build, copy matching stage1 native target libraries into the native stage2 sysroot. Do not replace them with installed cached std.",

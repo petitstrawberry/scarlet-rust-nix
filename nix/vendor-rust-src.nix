@@ -10,9 +10,9 @@
 
 let
   outputHashes = {
-    x86_64-linux = "sha256-gKz/LeopgBZfW2UvghGVkz7o5Xk03ZQkI2myDYs9Zgw=";
-    aarch64-linux = "sha256-gKz/LeopgBZfW2UvghGVkz7o5Xk03ZQkI2myDYs9Zgw=";
-    aarch64-darwin = "sha256-n6JFpPH3qQQ2OQIXsPP32RgoRvp5u/sC3qDYhRvyJsM=";
+    x86_64-linux = "sha256-Y/hM0PIqWwfC4twOm15Sc6gcVysqw6j+EovkguPlnfs=";
+    aarch64-linux = "sha256-Y/hM0PIqWwfC4twOm15Sc6gcVysqw6j+EovkguPlnfs=";
+    aarch64-darwin = "sha256-Ot3PzbE+ADTeULDq+OeDAR2qZVonpWGhN2dMiaUbbZ8=";
   };
 in
 stdenvNoCC.mkDerivation {

@@ -1,6 +1,6 @@
 # Native Scarlet Rust compiler build
 
-This directory defines the native `rustc` and Cranelift build inputs used by
+This directory defines the native `rustc`, `cargo`, and Cranelift build inputs used by
 `scarlet-rust-nix`. The Rust fork revision is pinned by `flake.nix`; compiler,
 standard-library, CRT, and backend changes belong in that fork. `recipe.json`
 pins dependency versions and exact fork commits. `scripts/prepare-native-host.py`
@@ -18,7 +18,7 @@ Their exact commits are listed in `recipe.json`.
 `prepare_host_build.py` emits an isolated stage2 bootstrap configuration.
 `scripts/build-native-host.sh` builds and packages the result in Actions using
 build-host LLVM and a Scarlet-native Cranelift backend. The package contains the
-compiler, matching private driver/backend libraries, and matching target std.
+compiler, Cargo, matching private driver/backend libraries, and matching target std.
 Rust std remains statically linked into `rustc_driver`; no OS-wide shared std
 is installed. The build's manifest records the Rust revision, target, backend,
 and artifact identity. A successful build does not imply guest execution.
