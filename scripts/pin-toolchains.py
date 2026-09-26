@@ -68,13 +68,27 @@ def plan_pins(revisions, evaluate):
 def pin(cache, name, path):
     # The API pins a cached path directly. The CLI requires the complete path
     # to be registered in the local Nix store, which is unnecessary here.
-    payload = {"name": name, "storePath": path, "artifacts": [],
-               "keep": {"tag": "Revisions", "contents": 1}}
+    keep = {"tag": "Revisions", "contents": 1}
+    url = f"https://app.cachix.org/api/v1/cache/{cache}/pin"
+    headers = {"Authorization": f"Bearer {os.environ['CACHIX_AUTH_TOKEN']}",
+               "Content-Type": "application/json", "User-Agent": "scarlet-rust-nix"}
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
+        existing = json.load(response)
+    for entry in existing:
+        if entry["name"] != name:
+            continue
+        revision = entry.get("lastRevision") or {}
+        if (revision.get("storePath") == path and revision.get("orphaned") is False
+                and entry.get("keep") == keep):
+            print(f"Already protected {name}: {path}", flush=True)
+            return
+        break
+
+    payload = {"name": name, "storePath": path, "artifacts": [], "keep": keep}
     request = urllib.request.Request(
-        f"https://app.cachix.org/api/v1/cache/{cache}/pin",
+        url,
         data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {os.environ['CACHIX_AUTH_TOKEN']}",
-                 "Content-Type": "application/json", "User-Agent": "scarlet-rust-nix"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=60):
