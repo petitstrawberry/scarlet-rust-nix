@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 spec = importlib.util.spec_from_file_location("pins", Path(__file__).with_name("pin-toolchains.py"))
 pins = importlib.util.module_from_spec(spec)
@@ -77,12 +77,50 @@ class PinTests(unittest.TestCase):
             self.assertEqual(missing[0]["revision"], "b" * 40)
 
     def test_pin_api_uses_a_bounded_revision_history(self):
+        response = MagicMock()
+        response.read.return_value = b"[]"
         with patch.dict(os.environ, {"CACHIX_AUTH_TOKEN": "test-token"}), \
                 patch.object(pins.urllib.request, "urlopen") as request:
+            request.return_value.__enter__.return_value = response
             pins.pin("test", "scarlet-distro-aarch64-darwin", "/nix/store/example")
-        data = json.loads(request.call_args.args[0].data)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[0].args[0].get_method(), "GET")
+        self.assertEqual(request.call_args_list[1].args[0].get_method(), "POST")
+        data = json.loads(request.call_args_list[1].args[0].data)
         self.assertEqual(data["keep"], {"tag": "Revisions", "contents": 1})
         self.assertEqual(data["artifacts"], [])
+
+    def test_unchanged_healthy_pin_is_not_recreated(self):
+        path = "/nix/store/example"
+        response = MagicMock()
+        response.read.return_value = json.dumps([{
+            "name": "scarlet-distro-x86_64-linux",
+            "keep": {"tag": "Revisions", "contents": 1},
+            "lastRevision": {"storePath": path, "orphaned": False},
+        }]).encode()
+        with patch.dict(os.environ, {"CACHIX_AUTH_TOKEN": "test-token"}), \
+                patch.object(pins.urllib.request, "urlopen") as request:
+            request.return_value.__enter__.return_value = response
+            pins.pin("test", "scarlet-distro-x86_64-linux", path)
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(request.call_args.args[0].get_method(), "GET")
+
+    def test_changed_or_orphaned_pin_is_recreated(self):
+        path = "/nix/store/new"
+        for old_path, orphaned in (("/nix/store/old", False), (path, True)):
+            with self.subTest(old_path=old_path, orphaned=orphaned):
+                response = MagicMock()
+                response.read.return_value = json.dumps([{
+                    "name": "scarlet-distro-x86_64-linux",
+                    "keep": {"tag": "Revisions", "contents": 1},
+                    "lastRevision": {"storePath": old_path, "orphaned": orphaned},
+                }]).encode()
+                with patch.dict(os.environ, {"CACHIX_AUTH_TOKEN": "test-token"}), \
+                        patch.object(pins.urllib.request, "urlopen") as request:
+                    request.return_value.__enter__.return_value = response
+                    pins.pin("test", "scarlet-distro-x86_64-linux", path)
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual(request.call_args_list[1].args[0].get_method(), "POST")
 
     def test_changed_consumer_stops_a_stale_plan_before_replacing_pins(self):
         with tempfile.TemporaryDirectory() as directory:
