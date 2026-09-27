@@ -30,9 +30,7 @@ function normalize(path, text) {
 }
 
 function validateUpdate(files, before, after) {
-  if (!files.some(file => file.filename === 'flake.nix')) {
-    throw new Error('The update must change flake.nix');
-  }
+  if (files.length === 0) throw new Error('The update has no changed files');
   for (const file of files) {
     if (!FILES.includes(file.filename) || file.status !== 'modified') {
       throw new Error(`Unexpected update diff: ${file.filename} (${file.status})`);
@@ -43,9 +41,12 @@ function validateUpdate(files, before, after) {
       throw new Error(`The update changes more than revision/hash values in ${path}`);
     }
   }
-  const oldRevision = normalize('flake.nix', before['flake.nix']).values.rustRev;
+  // A recipe change can require new hashes without advancing the Rust commit,
+  // including vendor-only changes. CI and the upstream revision check still apply.
+  if (!files.some(file => before[file.filename] !== after[file.filename])) {
+    throw new Error('The update did not change any revision or hash values');
+  }
   const revision = normalize('flake.nix', after['flake.nix']).values.rustRev;
-  if (revision === oldRevision) throw new Error('The Rust revision did not change');
   return revision;
 }
 

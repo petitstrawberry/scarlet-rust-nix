@@ -13,7 +13,7 @@ on:
         default: "scarlet-target"
         type: string
       hash_only:
-        description: "Compute source and vendor hash artifacts without opening an update PR."
+        description: "Only upload hash artifacts; do not apply them or open an update PR."
         required: false
         default: false
         type: boolean
@@ -27,7 +27,8 @@ permissions:
 
 concurrency:
   group: update-scarlet-rust-revision
-  cancel-in-progress: true
+  # A no-op scheduled check must not cancel an in-flight hash calculation.
+  cancel-in-progress: false
 
 jobs:
   resolve:
@@ -57,7 +58,6 @@ jobs:
         env:
           REQUESTED_RUST_REV: ${{ inputs.rust_rev }}
           REQUESTED_RUST_REF: ${{ inputs.rust_ref }}
-          HASH_ONLY: ${{ inputs.hash_only }}
         run: |
           set -euo pipefail
 
@@ -86,9 +86,9 @@ jobs:
             echo "ref=${rust_ref}"
           } >> "${GITHUB_OUTPUT}"
 
-          # Explicit hash-only runs also recompute unchanged revisions after
-          # source-fetch or vendoring recipe changes.
-          if [ "${current_rev}" = "${rust_rev}" ] && [ "${HASH_ONLY}" != true ]; then
+          # Every manual run recomputes hashes, even at the same Rust revision:
+          # source-fetch and vendoring recipe changes also change their contents.
+          if [ "${current_rev}" = "${rust_rev}" ] && [ "${GITHUB_EVENT_NAME}" != workflow_dispatch ]; then
             echo "changed=false" >> "${GITHUB_OUTPUT}"
           else
             echo "changed=true" >> "${GITHUB_OUTPUT}"
@@ -186,15 +186,29 @@ jobs:
           merge-multiple: true
 
       - name: Apply update
-        run: scripts/apply-rust-update-hashes.sh "${{ needs.resolve.outputs.rev }}" .rust-update-hashes
+        id: apply
+        run: |
+          set -euo pipefail
+          scripts/apply-rust-update-hashes.sh "${{ needs.resolve.outputs.rev }}" .rust-update-hashes
+          if git diff --quiet -- flake.nix nix/vendor-rust-src.nix; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "Rust revision and source/vendor hashes are already current." >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
 
       - name: Create update PR
+        if: steps.apply.outputs.changed == 'true'
         run: |
           set -euo pipefail
 
           branch="automation/rust-update"
           title="Update Scarlet Rust to ${{ needs.resolve.outputs.short_rev }}"
           body="Updates the packaged Scarlet Rust fork revision to ${{ needs.resolve.outputs.rev }}."
+          if [ "${{ needs.resolve.outputs.current_rev }}" = "${{ needs.resolve.outputs.rev }}" ]; then
+            title="Refresh Scarlet Rust source hashes for ${{ needs.resolve.outputs.short_rev }}"
+            body="Recomputes the source and vendor hashes for the existing Rust revision after packaging recipe changes."
+          fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
