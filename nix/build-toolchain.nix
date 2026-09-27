@@ -135,10 +135,10 @@ baseRustc.overrideAttrs (old: {
   postPatch = ''
     patchShebangs src/etc
 
-    # fetchgit/vendor sources have no .git directory. Tell bootstrap the
-    # exact source revision so rustc -vV and Cargo's compiler fingerprint
-    # change when the Scarlet Rust fork advances.
-    printf '%s\n%s\nunknown\n' '${rustRev}' '${builtins.substring 0 9 rustRev}' > git-commit-info
+    # The fetcher records the pinned commit before removing .git. Preserve
+    # its real date: nightly version parsers reject a fabricated "unknown".
+    test "$(sed -n '1p' git-commit-info)" = '${rustRev}'
+    sed -n '3p' git-commit-info | grep -Ex '[0-9]{4}-[0-9]{2}-[0-9]{2}'
 
     if [ ! -f .cargo/config.toml ]; then
       mkdir -p .cargo
@@ -189,6 +189,7 @@ baseRustc.overrideAttrs (old: {
       || test -x "$out/libexec/rust-analyzer-proc-macro-srv"
     test -f "$out/manifest.toml"
     "$out/bin/rustc" -vV | grep -Fx 'commit-hash: ${rustRev}'
+    "$out/bin/rustc" -vV | grep -Fx "commit-date: $(sed -n '3p' git-commit-info)"
     test -f "$out/lib/rustlib/src/rust/library/Cargo.lock"
     test -x "$out/lib/rustlib/${hostTriple}/bin/rust-lld"
 

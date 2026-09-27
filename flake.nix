@@ -84,6 +84,13 @@
             fetchSubmodules = true;
             deepClone = false;
             leaveDotGit = false;
+            # Record bootstrap's tarball metadata before fetchgit removes .git.
+            # The pinned commit supplies the date for every host and native build.
+            postCheckout = ''
+              test "$(git -C "$out" rev-parse HEAD)" = "${rustRev}"
+              git -C "$out" log -1 --date=short --abbrev=9 \
+                --format='%H%n%h%n%cd' > "$out/git-commit-info"
+            '';
             hash = rustHash;
           };
           llvmPackages = pkgs.llvmPackages_21;
@@ -186,6 +193,7 @@
         system:
         let
           toolchain = self.packages.${system}.scarlet-rust-toolchain;
+          vendoredSource = self.packages.${system}.scarlet-rust-vendored-src;
           pkgs = import nixpkgs { inherit system; };
           allCheckedTargets = [ hostTriples.${system} ] ++ targetTriples;
           stdCheckedTargets = [
@@ -213,6 +221,23 @@
             done
             ${toolchain}/bin/rustc -vV
             touch $out
+          '';
+          rustversion = pkgs.runCommand "scarlet-rust-toolchain-rustversion-check" {
+            nativeBuildInputs = [ pkgs.stdenv.cc ];
+          } ''
+            export RUSTC=${toolchain}/bin/rustc
+            export HOST=${hostTriples.${system}}
+            export OUT_DIR="$PWD/rustversion-output"
+            mkdir -p "$OUT_DIR"
+            # Exercise the actual consumer parser from the pinned vendor tree.
+            for crate in ${vendoredSource}/vendor/rustversion*; do
+              test -f "$crate/build/build.rs"
+              "$RUSTC" --edition=2018 --crate-name rustversion_build \
+                "$crate/build/build.rs" -o rustversion-build
+              ./rustversion-build
+              grep -F 'crate::version::Channel::Nightly(' "$OUT_DIR/version.expr"
+            done
+            touch "$out"
           '';
         }
       );

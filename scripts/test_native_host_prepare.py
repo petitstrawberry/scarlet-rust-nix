@@ -30,6 +30,8 @@ class DependencyPreparationTests(unittest.TestCase):
             backend.write_text("[patch.crates-io]\n# existing section\n")
             (source / "Cargo.toml").write_text("[workspace]\n")
             (source / "vendor").mkdir()
+            commit_info = f'{"a" * 40}\n{"a" * 9}\n2026-09-26\n'
+            (source / "git-commit-info").write_text(commit_info)
             lexicon_fork = root / "lexicon-fork"
             lexicon_fork.mkdir()
             (lexicon_fork / "Cargo.toml").write_text(
@@ -77,7 +79,7 @@ class DependencyPreparationTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"SCARLET_RUST_REV": "a" * 40}):
                 prepare.prepare(source, inputs)
             self.assertEqual(target.read_text(), "fork-owned source stays unchanged\n")
-            self.assertEqual((source / "git-commit-info").read_text(), f'{"a" * 40}\n{"a" * 9}\nunknown\n')
+            self.assertEqual((source / "git-commit-info").read_text(), commit_info)
             self.assertEqual((source / "native-host-deps/target-lexicon-0.13.3/triple.txt").read_text(), "scarlet\n")
             self.assertFalse((source / "native-host-deps/target-lexicon-0.13.3/.git").exists())
             for version in ("0.8.9", "0.9.0"):
@@ -93,11 +95,38 @@ class DependencyPreparationTests(unittest.TestCase):
                           backend.read_text())
             marker = json.loads((source / ".scarlet-native-host-prepared.json").read_text())
             self.assertEqual(marker["rust_revision"], "a" * 40)
+            self.assertEqual(marker["rust_commit_date"], "2026-09-26")
             self.assertEqual(marker["inputs"], [
                 {"repository": str(libloading_fork), "revision": revision_08},
                 {"repository": str(libloading_fork), "revision": revision_09},
                 {"repository": str(lexicon_fork), "revision": revision},
             ])
+
+    def test_rejects_missing_or_invalid_source_commit_metadata(self):
+        revision = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)
+            with self.assertRaises(ValueError):
+                prepare.source_commit_date(source, revision)
+            for metadata in (
+                f'{revision}\n{revision[:9]}\nunknown\n',
+                f'{revision}\n{revision[:9]}\n2026-02-30\n',
+                f'{"b" * 40}\n{"b" * 9}\n2026-09-26\n',
+                f'{revision}\n{"b" * 9}\n2026-09-26\n',
+                f'{revision}\n{revision[:9]}\n',
+            ):
+                with self.subTest(metadata=metadata):
+                    (source / "git-commit-info").write_text(metadata)
+                    with self.assertRaises(ValueError):
+                        prepare.source_commit_date(source, revision)
+
+    def test_preserves_valid_leap_day_commit_date(self):
+        revision = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)
+            (source / "git-commit-info").write_text(
+                f'{revision}\n{revision[:9]}\n2024-02-29\n')
+            self.assertEqual(prepare.source_commit_date(source, revision), "2024-02-29")
 
 
 
