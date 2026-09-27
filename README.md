@@ -76,6 +76,14 @@ to approve a `GITHUB_TOKEN`-triggered workflow. A retry with identical contents
 does not replace the commit. New updates replace the pending candidate and cancel
 the previous PR build.
 
+Manual runs always recompute hashes, even when the Rust revision is unchanged.
+Use a manual run after changing source-fetch or vendoring recipes; it opens an
+update PR if the computed hashes differ, and finishes without a PR if nothing
+changed. Scheduled checks and Rust notifications skip unchanged revisions.
+Runs are serialized so a later check cannot cancel an active hash calculation.
+The optional `hash_only` input only uploads hash artifacts: it does not apply
+them to the repository or open a PR.
+
 After all three host builds, checks and Cachix uploads succeed, the build workflow
 merges the update with `SCARLET_RUST_NIX_UPDATE_TOKEN`. The merger accepts only
 revision/hash changes in `flake.nix` and `nix/vendor-rust-src.nix`, checks the

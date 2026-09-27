@@ -29,7 +29,16 @@ test('rejects unrelated paths, deleted files and Nix code changes', () => {
   }));
 });
 
-test('rejects malformed hashes, duplicate assignments and unchanged revisions', () => {
+test('accepts source and vendor hash refreshes at the same Rust revision', () => {
+  const newHash = `sha256-${'B'.repeat(43)}=`;
+  for (const path of Object.keys(before)) {
+    const refreshed = { ...before, [path]: before[path].replaceAll(hash, newHash) };
+    assert.equal(merge.validateUpdate([{ filename: path, status: 'modified' }], before, refreshed), oldRev);
+  }
+});
+
+test('rejects malformed hashes, duplicate assignments and empty updates', () => {
+  assert.throws(() => merge.validateUpdate([], before, before));
   assert.throws(() => merge.validateUpdate(files, before, before));
   assert.throws(() => merge.validateUpdate(files, before, {
     ...after, 'flake.nix': after['flake.nix'].replace(hash, 'invalid'),
@@ -39,7 +48,7 @@ test('rejects malformed hashes, duplicate assignments and unchanged revisions', 
   }));
 });
 
-function fixture() {
+function fixture(updated = after, changedFiles = files) {
   const calls = [];
   const pr = {
     number: 42, state: 'open', draft: false,
@@ -49,7 +58,7 @@ function fixture() {
   const main = { commit: { sha: 'base' } };
   const upstream = { sha: newRev };
   const github = {
-    paginate: async () => files,
+    paginate: async () => changedFiles,
     rest: {
       pulls: {
         get: async () => ({ data: pr }),
@@ -62,7 +71,7 @@ function fixture() {
         getCommit: async () => ({ data: upstream }),
         getContent: async ({ path, ref }) => ({ data: {
           type: 'file', encoding: 'base64',
-          content: Buffer.from((ref === 'base' ? before : after)[path]).toString('base64'),
+          content: Buffer.from((ref === 'base' ? before : updated)[path]).toString('base64'),
         } }),
       },
     },
@@ -82,6 +91,22 @@ test('merges only the SHA that passed CI', async () => {
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0][0], 'merge');
   assert.equal(f.calls[0][1].sha, 'head');
+});
+
+test('merges a vendor hash refresh only while its Rust revision is current', async () => {
+  const path = 'nix/vendor-rust-src.nix';
+  const refreshed = { ...before, [path]: before[path].replaceAll(hash, `sha256-${'B'.repeat(43)}=`) };
+  for (const current of [oldRev, newRev]) {
+    const f = fixture(refreshed, [{ filename: path, status: 'modified' }]);
+    f.upstream.sha = current;
+    await merge(f.args);
+    if (current === oldRev) {
+      assert.equal(f.calls[0][0], 'merge');
+      assert.equal(f.calls[0][1].sha, 'head');
+    } else {
+      assert.deepEqual(f.calls, []);
+    }
+  }
 });
 
 test('does not merge superseded, draft or closed PRs', async () => {
