@@ -57,6 +57,7 @@ jobs:
         env:
           REQUESTED_RUST_REV: ${{ inputs.rust_rev }}
           REQUESTED_RUST_REF: ${{ inputs.rust_ref }}
+          HASH_ONLY: ${{ inputs.hash_only }}
         run: |
           set -euo pipefail
 
@@ -85,7 +86,9 @@ jobs:
             echo "ref=${rust_ref}"
           } >> "${GITHUB_OUTPUT}"
 
-          if [ "${current_rev}" = "${rust_rev}" ]; then
+          # Explicit hash-only runs also recompute unchanged revisions after
+          # source-fetch or vendoring recipe changes.
+          if [ "${current_rev}" = "${rust_rev}" ] && [ "${HASH_ONLY}" != true ]; then
             echo "changed=false" >> "${GITHUB_OUTPUT}"
           else
             echo "changed=true" >> "${GITHUB_OUTPUT}"

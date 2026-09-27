@@ -6,6 +6,7 @@ This changes only --source; it never modifies registry caches or an installed
 compiler. Dependency inputs are recorded by exact Git commits.
 """
 import argparse
+from datetime import date
 import json
 import os
 from pathlib import Path
@@ -36,6 +37,21 @@ def fetch_package(destination, package):
     return {"repository": source["url"], "revision": revision}
 
 
+def source_commit_date(source, rust_rev):
+    try:
+        lines = (source / "git-commit-info").read_text().splitlines()
+    except FileNotFoundError as error:
+        raise ValueError("source must contain fetched Git commit metadata") from error
+    if (len(lines) != 3 or lines[0] != rust_rev
+            or not re.fullmatch(r"[0-9a-f]{9,40}", lines[1])
+            or not rust_rev.startswith(lines[1])):
+        raise ValueError("source Git commit metadata does not match SCARLET_RUST_REV")
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", lines[2]):
+        raise ValueError("source Git commit metadata must contain an ISO commit date")
+    date.fromisoformat(lines[2])
+    return lines[2]
+
+
 def prepare(source, inputs, cargo=None):
     source = source.resolve(strict=True)
     inputs = inputs.resolve(strict=True)
@@ -49,10 +65,9 @@ def prepare(source, inputs, cargo=None):
     rust_rev = os.environ.get("SCARLET_RUST_REV", "")
     if not re.fullmatch(r"[0-9a-f]{40}", rust_rev):
         raise ValueError("SCARLET_RUST_REV must be a full Rust fork commit")
-    # Bootstrap reads this standard tarball metadata when its source has no
-    # .git directory. A revision-bearing rustc -vV also invalidates Cargo's
-    # cached crate metadata when the native compiler is updated.
-    (source / "git-commit-info").write_text(f"{rust_rev}\n{rust_rev[:9]}\nunknown\n")
+    # Preserve the metadata produced while the fetched source still had .git.
+    # Native and cross compilers must report the same real source commit date.
+    commit_date = source_commit_date(source, rust_rev)
     recipe = json.loads((inputs / "recipe.json").read_text())
     records = []
     for package in recipe["packages"]:
@@ -93,6 +108,7 @@ def prepare(source, inputs, cargo=None):
                         f'target-lexicon@{lexicon["version"]}'],
                        cwd=backend_manifest.parent, env=environment, check=True)
     marker.write_text(json.dumps({"schema": 2, "rust_revision": rust_rev,
+                                  "rust_commit_date": commit_date,
                                   "inputs": records, "native_compiler_built": False,
                                   "guest_execution_verified": False}, indent=2) + "\n")
     print(f"Prepared native Scarlet source: {source}")
