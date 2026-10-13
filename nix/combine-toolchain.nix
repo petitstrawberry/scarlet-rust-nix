@@ -68,6 +68,7 @@ runCommand "scarlet-rust-toolchain-${version}"
       -vV|-Vv|"--version --verbose"|"--verbose --version")
         "$out/bin/rustc-real" "\$@"
         printf 'native-std-commit: ${nativeRuntimeRev}\n'
+        printf 'native-std-package: ${nativeRuntimeSource}\n'
         ;;
       *) exec "$out/bin/rustc-real" "\$@" ;;
     esac

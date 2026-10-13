@@ -53,9 +53,33 @@ stdenvNoCC.mkDerivation {
       case "$archive" in *libscarlet_std_build-*) continue ;; esac
       cp "$archive" "$out/lib/rustlib/${targetTriple}/lib/"
     done
+    # The compiler's unchanged Native entry ABI still requires its startup
+    # objects. build-std produces Rust libraries, not these CRT inputs.
+    for object in ${baseRustc}/lib/rustlib/${targetTriple}/lib/*.o; do
+      if [ -f "$object" ]; then
+        cp "$object" "$out/lib/rustlib/${targetTriple}/lib/"
+      fi
+    done
     test -n "$(find "$out/lib/rustlib/${targetTriple}/lib" -name 'libstd-*.rlib' -print -quit)"
     mkdir -p "$out/lib/rustlib/src/rust"
     cp -R library "$out/lib/rustlib/src/rust/"
+  '';
+  doInstallCheck = targetTriple != "riscv32gc-unknown-scarlet";
+  installCheckPhase = ''
+    runHook preInstallCheck
+    test -f "$out/lib/rustlib/${targetTriple}/lib/scarlet-crt0.o"
+    rm "sysroot/lib/rustlib/${targetTriple}"
+    ln -s "$out/lib/rustlib/${targetTriple}" "sysroot/lib/rustlib/${targetTriple}"
+    cat > native-startup-check.rs <<EOF
+    fn main() {
+        let worker = std::thread::spawn(|| std::env::args().count());
+        println!("{}", worker.join().unwrap());
+    }
+    EOF
+    ${baseRustc}/bin/rustc --sysroot "$PWD/sysroot" --edition=2024 \
+      --target ${targetTriple} -C panic=abort -C opt-level=3 \
+      native-startup-check.rs -o native-startup-check
+    runHook postInstallCheck
   '';
   passthru = { inherit targetTriple runtimeRev; };
   meta.platforms = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
