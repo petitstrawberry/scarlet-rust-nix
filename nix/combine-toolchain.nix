@@ -1,6 +1,7 @@
 {
   lib,
   runCommand,
+  runtimeShell,
   baseToolchain,
   targetStdPackages,
   rustRev,
@@ -55,6 +56,23 @@ runCommand "scarlet-rust-toolchain-${version}"
   ''
     cp -R "${baseToolchain}" "$out"
     chmod -R u+w "$out"
+
+    # Cargo fingerprints include the complete verbose compiler version. Keep
+    # the actual compiler revision intact and expose the independently rebuilt
+    # Native std revision, so old dependency metadata is not silently reused.
+    mv "$out/bin/rustc" "$out/bin/rustc-real"
+    cat > "$out/bin/rustc" <<EOF
+    #!${runtimeShell}
+    set -eu
+    case "\$*" in
+      -vV|-Vv|"--version --verbose"|"--verbose --version")
+        "$out/bin/rustc-real" "\$@"
+        printf 'native-std-commit: ${nativeRuntimeRev}\n'
+        ;;
+      *) exec "$out/bin/rustc-real" "\$@" ;;
+    esac
+    EOF
+    chmod +x "$out/bin/rustc"
 
     ${copyTargetStd}
     rm -rf "$out/lib/rustlib/src/rust/library"
