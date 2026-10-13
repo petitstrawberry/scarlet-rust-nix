@@ -4,6 +4,8 @@
   baseToolchain,
   targetStdPackages,
   rustRev,
+  nativeRuntimeRev,
+  nativeRuntimeSource,
   hostTriple,
   targetTriples,
   noStdTargetTriples,
@@ -41,31 +43,30 @@ let
 in
 runCommand "scarlet-rust-toolchain-${version}"
   {
-    outputs = [
-      "out"
-      "man"
-      "doc"
-    ];
+    outputs = [ "out" ];
     passthru = (baseToolchain.passthru or { }) // {
       inherit baseToolchain targetStdPackages;
+      # Documentation is unchanged. Keep its original lazy outputs rather than
+      # rebuilding the compiler because an optional doc output is not cached.
+      inherit (baseToolchain) man doc;
     };
-    meta = baseToolchain.meta or { };
+    meta = (baseToolchain.meta or { }) // { outputsToInstall = [ "out" ]; };
   }
   ''
     cp -R "${baseToolchain}" "$out"
     chmod -R u+w "$out"
-    mkdir -p "$man" "$doc"
-    cp -R "${baseToolchain.man}/." "$man/"
-    cp -R "${baseToolchain.doc}/." "$doc/"
-    chmod -R u+w "$man" "$doc"
 
     ${copyTargetStd}
+    rm -rf "$out/lib/rustlib/src/rust/library"
+    cp -R "${nativeRuntimeSource}/lib/rustlib/src/rust/library" "$out/lib/rustlib/src/rust/library"
+    chmod -R u+w "$out/lib/rustlib/src/rust/library"
 
     sort -u "$out/lib/rustlib/components" -o "$out/lib/rustlib/components"
 
     cat > "$out/manifest.toml" <<EOF
     schema = 1
     rust_commit = "${rustRev}"
+    native_std_commit = "${nativeRuntimeRev}"
     host = "${hostTriple}"
     targets = [
     ${targetManifest}

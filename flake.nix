@@ -9,6 +9,9 @@
   };
 
   inputs = {
+    # Reuse the published compiler, host libraries, tools and documentation.
+    # The runtime-only update does not require rebuilding the compiler.
+    compiler-baseline.url = "github:petitstrawberry/scarlet-rust-nix/074b722ac3c0d69daa8d4560996e23474c373d7c";
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -21,6 +24,7 @@
       self,
       nixpkgs,
       rust-overlay,
+      compiler-baseline,
     }:
     let
       lib = nixpkgs.lib;
@@ -61,6 +65,7 @@
 
       rustRev = "71dd0425890dc69e910009b4df4ead3cce17b86a";
       rustHash = "sha256-C2v7d/B1L+wl8OqJck5IjhFNdnTJmiJCucp1b0VdjcM=";
+      nativeStdRev = "26d00a8a3a8489d73f5ae3575880e9f915dfd0f2";
 
       forAllSystems = f: lib.genAttrs systems (system: f system);
     in
@@ -93,6 +98,16 @@
             '';
             hash = rustHash;
           };
+          compilerBaseline = assert rustRev == "71dd0425890dc69e910009b4df4ead3cce17b86a";
+            compiler-baseline.packages.${system}.scarlet-rust-toolchain;
+          nativeStdSource = pkgs.fetchzip {
+            url = "https://github.com/petitstrawberry/rust/archive/${nativeStdRev}.tar.gz";
+            hash = "sha256-7eRi5lUKhgZxHYvG0WpVcrkTmOJE8YBdzGzEQVRifNQ=";
+          };
+          nativeBacktraceSource = pkgs.fetchzip {
+            url = "https://github.com/rust-lang/backtrace-rs/archive/b65ab935fb2e0d59dba8966ffca09c9cc5a5f57c.tar.gz";
+            hash = "sha256-fG907gkqVC+7V4STVEzPIPGJU+FJX9m/kteb3hmo1ec=";
+          };
           llvmPackages = pkgs.llvmPackages_21;
           vendoredRustSrc = pkgs.callPackage ./nix/vendor-rust-src.nix {
             inherit bootstrapRust rustRev;
@@ -105,24 +120,17 @@
             hostTriple = hostTriples.${system};
             targetTriples = scarletTargetTriples ++ nixpkgsCompilerTargetTriples;
           };
-          targetStdScopes = {
-            riscv64gc-unknown-none-elf = pkgs.pkgsCross.riscv64-embedded.buildPackages;
-            aarch64-unknown-none = pkgs.pkgsCross.aarch64-embedded.buildPackages;
-            wasm32-wasip1 = pkgs.pkgsCross.wasi32.buildPackages;
-          };
-          targetStdPackages = lib.mapAttrsToList (target: scope: {
+          nativeStdPackages = map (target: {
             inherit target;
-            package = scope.callPackage ./nix/build-target-std.nix {
-              inherit
-                bootstrapRust
-                vendoredRustSrc
-                rustRev
-                llvmPackages
-                ;
-              nixpkgsPath = pkgs.path;
-              baseRustc = scarlet-rustc;
+            package = pkgs.callPackage ./nix/build-native-std.nix {
+              baseRustc = compilerBaseline;
+              runtimeSource = nativeStdSource;
+              backtraceSource = nativeBacktraceSource;
+              runtimeRev = nativeStdRev;
+              targetTriple = target;
             };
-          }) targetStdScopes;
+          }) scarletTargetTriples;
+          targetStdPackages = nativeStdPackages;
           scarlet-rust-toolchain = pkgs.callPackage ./nix/combine-toolchain.nix {
             inherit
               rustRev
@@ -130,12 +138,15 @@
               noStdTargetTriples
               targetStdPackages
               ;
-            baseToolchain = scarlet-rustc;
+            baseToolchain = compilerBaseline;
+            nativeRuntimeRev = nativeStdRev;
+            nativeRuntimeSource = (builtins.head nativeStdPackages).package;
             hostTriple = hostTriples.${system};
           };
         in
         {
           scarlet-rust-source = rustSrc;
+          scarlet-native-std-aarch64 = (builtins.elemAt nativeStdPackages 2).package;
           # Exposed separately for the experimental native-host Actions build.
           # Existing toolchain outputs and their source pins remain unchanged.
           scarlet-bootstrap-rust = bootstrapRust;

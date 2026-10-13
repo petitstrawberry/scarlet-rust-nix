@@ -33,6 +33,20 @@ The compiler build follows nixpkgs' Rust packaging split:
   nixpkgs cross/fastCross path where applicable, then assembled into the final
   `scarlet-rust-toolchain`.
 
+## Native runtime refresh
+
+The default toolchain keeps the compiler, host tools, upstream target libraries
+and documentation from the immutable `compiler-baseline` flake. Native target
+standard libraries are rebuilt separately from `nativeStdRev`, including the
+TLS namespace allocator-owner fix required by independently linked Rust DSOs.
+The manifest records both `rust_commit` and `native_std_commit`.
+
+This refresh is compatible with compiler commit 71dd0425890d: the runtime source
+changes only Scarlet TLS ownership. A compiler revision update must also refresh
+the baseline and recheck source compatibility; an assertion prevents silently
+combining an automatic compiler source update with the old baseline. Documentation
+remains accessible through the original `man` and `doc` package attributes.
+
 ## Consumer rule
 
 Scarlet CI should use this flake with fallback builds disabled:
