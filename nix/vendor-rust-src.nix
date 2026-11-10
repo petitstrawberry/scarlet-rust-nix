@@ -4,6 +4,7 @@
   bootstrapRust,
   cacert,
   git,
+  python3,
   rust-src,
   rustRev,
 }:
@@ -24,6 +25,7 @@ stdenvNoCC.mkDerivation {
   nativeBuildInputs = [
     bootstrapRust
     git
+    python3
   ];
 
   outputHashAlgo = "sha256";
@@ -58,7 +60,7 @@ stdenvNoCC.mkDerivation {
     export CARGO_HOME="$TMPDIR/cargo-home"
     mkdir -p "$CARGO_HOME"
 
-    RUSTC_BOOTSTRAP=1 \
+    if RUSTC_BOOTSTRAP=1 \
     RUSTC="${bootstrapRust}/bin/rustc" \
     cargo vendor \
       --sync src/tools/cargo/Cargo.toml \
@@ -74,7 +76,52 @@ stdenvNoCC.mkDerivation {
       --sync src/tools/rustc-perf/Cargo.toml \
       --sync src/tools/opt-dist/Cargo.toml \
       --sync src/doc/book/packages/trpl/Cargo.toml \
-      vendor > .cargo/config.toml
+      vendor > .cargo/config.toml 2> "$TMPDIR/vendor.log"; then
+      cat "$TMPDIR/vendor.log" >&2
+    else
+      vendor_status=$?
+      cat "$TMPDIR/vendor.log" >&2
+      # Keep successful old-pin output byte-for-byte unchanged. Retry only
+      # Cargo's specific duplicate-name/version-across-sources failure.
+      if ! grep -Eq 'found duplicate version of package `[^`]+` vendored from two sources:' "$TMPDIR/vendor.log"; then
+        exit "$vendor_status"
+      fi
+      # These are generated outputs from the failed invocation, not sources.
+      rm -rf vendor
+      rm -f .cargo/config.toml
+      export RUSTC_BOOTSTRAP=1
+      export RUSTC="${bootstrapRust}/bin/rustc"
+      cargo vendor \
+        --sync src/tools/cargo/Cargo.toml \
+        --sync src/tools/clippy/Cargo.toml \
+        --sync src/tools/clippy/clippy_test_deps/Cargo.toml \
+        --sync src/tools/rustfmt/Cargo.toml \
+        --sync compiler/rustc_codegen_cranelift/Cargo.toml \
+        --sync compiler/rustc_codegen_gcc/Cargo.toml \
+        --sync library/Cargo.toml \
+        --sync src/bootstrap/Cargo.toml \
+        --sync src/tools/rustbook/Cargo.toml \
+        --sync src/tools/rustc-perf/Cargo.toml \
+        --sync src/tools/opt-dist/Cargo.toml \
+        --sync src/doc/book/packages/trpl/Cargo.toml \
+        vendor > "$TMPDIR/vendor-main.toml"
+
+      # rust-analyzer uses a Git home with the same name/version as crates.io.
+      # Cargo cannot vendor both in one invocation. Preserve their source IDs.
+      cargo vendor --manifest-path src/tools/rust-analyzer/Cargo.toml \
+        vendor-rust-analyzer > "$TMPDIR/vendor-rust-analyzer.toml"
+      python3 ${../scripts/merge-vendor-sources.py} \
+        "$TMPDIR/vendor-main.toml" "$TMPDIR/vendor-rust-analyzer.toml" \
+        src/tools/rust-analyzer/Cargo.lock > .cargo/config.toml
+
+      # Resolve both sides of the home collision using only the final vendor
+      # configuration. This checks source identities without compiling anything.
+      for manifest in Cargo.toml src/tools/cargo/Cargo.toml src/tools/rust-analyzer/Cargo.toml; do
+        CARGO_TARGET_DIR="$TMPDIR/vendor-metadata-target" \
+        cargo metadata --offline --locked --format-version 1 \
+          --manifest-path "$manifest" > /dev/null
+      done
+    fi
 
     runHook postBuild
   '';
@@ -88,3 +135,4 @@ stdenvNoCC.mkDerivation {
     runHook postInstall
   '';
 }
+
