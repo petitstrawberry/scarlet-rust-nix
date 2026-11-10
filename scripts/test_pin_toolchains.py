@@ -73,7 +73,7 @@ class PinTests(unittest.TestCase):
             missing = json.loads(outputs["matrix"])["include"]
             self.assertEqual(len(missing), 1)
             self.assertEqual(missing[0]["system"], "aarch64-darwin")
-            self.assertEqual(missing[0]["os"], "macos-14")
+            self.assertEqual(missing[0]["os"], "macos-15")
             self.assertEqual(missing[0]["revision"], "b" * 40)
 
     def test_pin_api_uses_a_bounded_revision_history(self):

@@ -44,6 +44,13 @@ class RustUpdateTests(unittest.TestCase):
         return subprocess.run(["bash", "-c", script], cwd=self.root,
                               env=dict(self.env, **env), text=True, capture_output=True)
 
+    def test_darwin_jobs_use_supported_arm64_runner(self):
+        for workflow in ('build.yml', 'update-rust.yml'):
+            with self.subTest(workflow=workflow):
+                content = (ROOT / '.github/workflows' / workflow).read_text()
+                self.assertIn('- os: macos-15\n            system: aarch64-darwin', content)
+                self.assertNotIn('macos-14', content)
+
     def test_manual_runs_recompute_unchanged_revisions_in_both_modes(self):
         for hash_only in ("true", "false"):
             with self.subTest(hash_only=hash_only):
