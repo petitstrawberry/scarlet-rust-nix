@@ -198,6 +198,14 @@ baseRustc.overrideAttrs (old: {
       find "$out/lib/rustlib/$target/lib" -maxdepth 1 -name 'libstd-*.rlib' -type f | grep -q .
     done
 
+    # Run the native import contract on the freshly built compiler/sysroots.
+    # Older pinned sources predate this contract; compiler updates that carry
+    # it must pass for both native 64-bit targets before cache publication.
+    if [ -f library/rtstartup/test-scarlet-loader-imports.py ]; then
+      python3 library/rtstartup/test-scarlet-loader-imports.py \
+        --rustc "$out/bin/rustc" --readelf ${llvmPackages.llvm}/bin/llvm-readelf
+    fi
+
     "$out/bin/rustc" -vV
 
     runHook postInstallCheck
