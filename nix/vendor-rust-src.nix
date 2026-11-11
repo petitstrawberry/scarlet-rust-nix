@@ -11,9 +11,9 @@
 
 let
   outputHashes = {
-    x86_64-linux = "sha256-C+L2fqALfFe9JF6oJXi0XAcWfQLc/Qm7Vt4j7m6gVTw=";
-    aarch64-linux = "sha256-C+L2fqALfFe9JF6oJXi0XAcWfQLc/Qm7Vt4j7m6gVTw=";
-    aarch64-darwin = "sha256-3CysCFX1mSmOR/argB6lM8Ji8rOc/2cFxz5Uq/cHaK4=";
+    x86_64-linux = "sha256-1soEWgKbJL3B9L9MXk7SufINiRQBs/W+RGPi4Rp46eg=";
+    aarch64-linux = "sha256-1soEWgKbJL3B9L9MXk7SufINiRQBs/W+RGPi4Rp46eg=";
+    aarch64-darwin = "sha256-m3J/r1vllZUOl7z48gh59Sx3oCKLkwG/1TwvLnd0H20=";
   };
 in
 stdenvNoCC.mkDerivation {
